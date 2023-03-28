@@ -1,0 +1,280 @@
+---
+title: "regression_coefficient_sim"
+author: "Junting Ren"
+date: "1/30/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("../functions/simulate_genetic_data.r")
+source("../functions/plot_cs.R")
+source("../functions/SCB_to_CS.R")
+library(tidyverse)
+library(doParallel)
+```
+
+# Function for SCB of regression coefficient
+```{r}
+SCB_regression_coef = function(df_fit, model, n_boot = 5000, alpha = 0.05, type = "linear"){
+  # type: "linear" or "logistic"
+  formula_ = as.formula(model)
+  if(type == "linear"){
+    fit = lm(model, df_fit)
+  }else if(type == "logistic"){
+    fit = suppressWarnings(glm(model, family = binomial(), data = df_fit)) # Suppress warning for 0 or 1 probability for simulation
+  }
+  sum_out = summary(fit)
+  coef_hat = fit$coefficients # bootstrap true mean
+  coef_sd = sum_out$coefficients[,2]
+  res_max_v = rep(0,n_boot)
+  for(i in 1:n_boot){
+    df_boot = df_fit[sample(1:dim(df_fit)[1], replace = T),]
+    if(type == "linear"){
+      fit_boot = lm(model, df_boot)
+    }else if(type == "logistic"){
+      fit_boot = suppressWarnings(glm(model, family = binomial(), data = df_boot))
+    }
+    sum_out_boot = summary(fit_boot)
+    coef_hat_boot =fit_boot$coefficients
+    coef_sd_boot = sum_out_boot$coefficients[,2]
+    residual = abs(coef_hat_boot - coef_hat)/coef_sd_boot
+    res_max_v[i] = max(residual)
+  }
+  thres = quantile(res_max_v, probs = 1 - alpha)
+  sim_CB = data.frame(LowerBound = coef_hat - thres*coef_sd, Mean = coef_hat, UpperBound = coef_hat + thres*coef_sd)
+}
+```
+
+
+# Simulations 
+## Parameter setup
+```{r}
+write = T
+set.seed(2022)
+n_sim = 5000
+n_boot= 1000
+alpha = 0.05
+var = 1 # variance for X covariance matrix
+sd_error = 1 # sd for data error term 
+num_levels = 8000
+model = "y ~ ."
+```
+
+
+
+## With fix sample size but different number of coefficients
+```{r}
+beta_num_vec =c(10,25, 100,200)
+#beta_num_vec =c(10,50)
+beta_list = list()
+n = 2000
+#NVec =c(200 )
+cl <- makeCluster(detectCores()-1)
+registerDoParallel(cl)
+scb_contain_v = c()
+upper8000_contain_v = c()
+upper5000_contain_v = c()
+upper2000_contain_v = c()
+upper1000_contain_v = c()
+upper500_contain_v = c()
+upper200_contain_v = c()
+upper100_contain_v = c()
+upper50_contain_v = c()
+upper25_contain_v = c()
+upper10_contain_v = c()
+upper5_contain_v = c()
+i = 1
+for(beta_num in beta_num_vec){
+  #beta = rnorm(beta_num)
+  set.seed(2022)
+  beta = rnorm(beta_num)
+  # Correlation matrix for the X
+  cor_matrix = ar1_cor(beta_num - 1,0.4)
+  covariance = var* cor_matrix
+  levels = seq(min(beta), max(beta), length.out = num_levels)
+  beta_list[[i]] = beta
+  i = i + 1
+  p_result = foreach(t=1:n_sim,.errorhandling = "pass", 
+                          .inorder = F,.verbose	=F, .packages = "tidyverse", .export = "plot_cs") %dopar% {
+    X = cbind(rep(1,n), MASS::mvrnorm(n = n, mu = rep(0,dim(covariance)[1]),Sigma = covariance))
+    y = X %*% beta +rnorm(n, sd = sd_error)
+    df_fit = data.frame(y= y, X[,-1])
+    SCB =  cbind(SCB_regression_coef(df_fit = df_fit, model = model, n_boot = n_boot, alpha = 0.05), beta_true = beta)
+    confidence_set = scb_to_cs(SCB$UpperBound,SCB$LowerBound, levels = levels,
+                               true_mean = SCB$beta_true, return_contain_only = T)
+    upper8000 = confidence_set$contain_all
+    upper5000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 5000)])
+    upper2000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 2000)])
+    upper1000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 1000)])
+    upper500 = all(confidence_set$contain_individual[sample(1:num_levels, size = 500)])
+    upper200 = all(confidence_set$contain_individual[sample(1:num_levels, size = 200)])
+    upper100 = all(confidence_set$contain_individual[sample(1:num_levels, size = 100)])
+    upper50 = all(confidence_set$contain_individual[sample(1:num_levels, size = 50)])
+    upper25 = all(confidence_set$contain_individual[sample(1:num_levels, size = 25)])
+    upper10 = all(confidence_set$contain_individual[sample(1:num_levels, size = 10)])
+    upper5 = all(confidence_set$contain_individual[sample(1:num_levels, size = 5)])
+    cover_scb  = SCB %>% 
+      mutate(contain = beta_true > LowerBound & beta_true < UpperBound) %>% 
+      pull(contain) %>% 
+      all()
+    list(upper8000 = upper8000, upper5000= upper5000,
+         upper2000= upper2000, upper1000 = upper1000,
+         upper500 = upper500, upper200 = upper200,
+         upper100 = upper100,
+         upper50 = upper50,
+         upper25 = upper25,
+         upper10 = upper10,
+         upper5 = upper5,
+         cover_scb =cover_scb
+         )
+    # list(cover_scb = cover_scb)
+  }
+  scb_contain_v = c(scb_contain_v,mean(sapply(p_result, function(x) x$cover_scb)))
+  upper8000_contain_v = c(upper8000_contain_v, mean(sapply(p_result, function(x) x$upper8000)))
+  upper5000_contain_v = c(upper5000_contain_v, mean(sapply(p_result, function(x) x$upper5000)))
+  upper2000_contain_v = c(upper2000_contain_v, mean(sapply(p_result, function(x) x$upper2000)))
+  upper1000_contain_v = c(upper1000_contain_v, mean(sapply(p_result, function(x) x$upper1000)))
+  upper500_contain_v = c(upper500_contain_v, mean(sapply(p_result, function(x) x$upper500)))
+  upper200_contain_v = c(upper200_contain_v, mean(sapply(p_result, function(x) x$upper200)))
+  upper100_contain_v = c(upper100_contain_v, mean(sapply(p_result, function(x) x$upper100)))
+  upper50_contain_v = c(upper50_contain_v, mean(sapply(p_result, function(x) x$upper50)))
+  upper25_contain_v = c(upper25_contain_v, mean(sapply(p_result, function(x) x$upper25)))
+  upper10_contain_v = c(upper10_contain_v, mean(sapply(p_result, function(x) x$upper10)))
+  upper5_contain_v = c(upper5_contain_v, mean(sapply(p_result, function(x) x$upper5)))
+}
+
+result_df_diff_beta = data.frame(beta_num =beta_num_vec,
+           upper5 = upper5_contain_v,
+           upper10 = upper10_contain_v,
+           upper25 = upper25_contain_v,
+           upper50 = upper50_contain_v,
+           upper100 = upper100_contain_v,
+           upper200 = upper200_contain_v,
+           upper500 = upper500_contain_v,
+           upper1000 = upper1000_contain_v,
+           upper2000 = upper2000_contain_v,
+           upper5000 = upper5000_contain_v,
+           upper8000 = upper8000_contain_v,
+           scb = scb_contain_v
+           )
+result_df_diff_beta
+#save.image("regression_coef_result.RData")
+```
+
+```{r}
+beta_list
+```
+
+
+## With fix number (50) of coefficients but different sample size
+```{r}
+M = 50
+set.seed(2022)
+# Correlation matrix for the X
+cor_matrix = ar1_cor(M - 1,0.4)
+covariance = var* cor_matrix
+beta = rnorm(M)
+print(beta)
+levels = seq(min(beta), max(beta), length.out = num_levels)
+```
+Showcase of SCB for coefficients
+```{r}
+n = 500
+X = cbind(rep(1,n), MASS::mvrnorm(n = n, mu = rep(0,dim(covariance)[1]),Sigma = covariance))
+y = X %*% beta +rnorm(n, sd = sd_error)
+df_fit = data.frame(y= y, X[,-1])
+SCB = cbind(SCB_regression_coef(df_fit = df_fit, model = model, n_boot = n_boot, alpha = 0.05), beta_true = beta)
+beta_names = paste("beta", 0:(M-1),sep = "")
+source("../functions/plot_cs.R")
+#debug(plot_cs)
+plot_cs(SCB = list(scb_up = SCB$UpperBound, scb_low = SCB$LowerBound), x = beta_names,levels = c(-2, -0.5, -0.1, 0.2), mu_true = beta, mu_hat = SCB$Mean)
+```
+
+
+```{r}
+NVec =c(200,500, 1000,2000, 4000)
+#NVec =c(200 )
+scb_contain_v = c()
+upper8000_contain_v = c()
+upper5000_contain_v = c()
+upper2000_contain_v = c()
+upper1000_contain_v = c()
+upper500_contain_v = c()
+upper200_contain_v = c()
+upper100_contain_v = c()
+upper50_contain_v = c()
+upper25_contain_v = c()
+upper10_contain_v = c()
+upper5_contain_v = c()
+i = 1
+for(n in NVec){
+  #beta = rnorm(beta_num)
+  p_result = foreach(t=1:n_sim,.errorhandling = "pass", 
+                          .inorder = F,.verbose	=F, .packages = "tidyverse", .export = "plot_cs") %dopar% {
+    X = cbind(rep(1,n), MASS::mvrnorm(n = n, mu = rep(0,dim(covariance)[1]),Sigma = covariance))
+    y = X %*% beta +rnorm(n, sd = sd_error)
+    df_fit = data.frame(y= y, X[,-1])
+    SCB =  cbind(SCB_regression_coef(df_fit = df_fit, model = model, n_boot = n_boot, alpha = 0.05), beta_true = beta)
+    confidence_set = scb_to_cs(SCB$UpperBound,SCB$LowerBound, levels = levels,
+                               true_mean = SCB$beta_true, return_contain_only = T)
+    upper8000 = confidence_set$contain_all
+    upper5000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 5000)])
+    upper2000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 2000)])
+    upper1000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 1000)])
+    upper500 = all(confidence_set$contain_individual[sample(1:num_levels, size = 500)])
+    upper200 = all(confidence_set$contain_individual[sample(1:num_levels, size = 200)])
+    upper100 = all(confidence_set$contain_individual[sample(1:num_levels, size = 100)])
+    upper50 = all(confidence_set$contain_individual[sample(1:num_levels, size = 50)])
+    upper25 = all(confidence_set$contain_individual[sample(1:num_levels, size = 25)])
+    upper10 = all(confidence_set$contain_individual[sample(1:num_levels, size = 10)])
+    upper5 = all(confidence_set$contain_individual[sample(1:num_levels, size = 5)])
+    cover_scb  = SCB %>% 
+      mutate(contain = beta_true > LowerBound & beta_true < UpperBound) %>% 
+      pull(contain) %>% 
+      all()
+    list(upper8000 = upper8000, upper5000= upper5000,
+         upper2000= upper2000, upper1000 = upper1000,
+         upper500 = upper500, upper200 = upper200,
+         upper100 = upper100,
+         upper50 = upper50,
+         upper25 = upper25,
+         upper10 = upper10,
+         upper5 = upper5,
+         cover_scb =cover_scb
+         )
+    # list(cover_scb = cover_scb)
+  }
+  scb_contain_v = c(scb_contain_v,mean(sapply(p_result, function(x) x$cover_scb)))
+  upper8000_contain_v = c(upper8000_contain_v, mean(sapply(p_result, function(x) x$upper8000)))
+  upper5000_contain_v = c(upper5000_contain_v, mean(sapply(p_result, function(x) x$upper5000)))
+  upper2000_contain_v = c(upper2000_contain_v, mean(sapply(p_result, function(x) x$upper2000)))
+  upper1000_contain_v = c(upper1000_contain_v, mean(sapply(p_result, function(x) x$upper1000)))
+  upper500_contain_v = c(upper500_contain_v, mean(sapply(p_result, function(x) x$upper500)))
+  upper200_contain_v = c(upper200_contain_v, mean(sapply(p_result, function(x) x$upper200)))
+  upper100_contain_v = c(upper100_contain_v, mean(sapply(p_result, function(x) x$upper100)))
+  upper50_contain_v = c(upper50_contain_v, mean(sapply(p_result, function(x) x$upper50)))
+  upper25_contain_v = c(upper25_contain_v, mean(sapply(p_result, function(x) x$upper25)))
+  upper10_contain_v = c(upper10_contain_v, mean(sapply(p_result, function(x) x$upper10)))
+  upper5_contain_v = c(upper5_contain_v, mean(sapply(p_result, function(x) x$upper5)))
+}
+
+result_df_diff_n = data.frame(N =NVec,
+           upper5 = upper5_contain_v,
+           upper10 = upper10_contain_v,
+           upper25 = upper25_contain_v,
+           upper50 = upper50_contain_v,
+           upper100 = upper100_contain_v,
+           upper200 = upper200_contain_v,
+           upper500 = upper500_contain_v,
+           upper1000 = upper1000_contain_v,
+           upper2000 = upper2000_contain_v,
+           upper5000 = upper5000_contain_v,
+           upper8000 = upper8000_contain_v,
+           scb = scb_contain_v
+           )
+result_df_diff_n
+if(write){
+  save.image("regression_coef_result.RData")
+}
+```

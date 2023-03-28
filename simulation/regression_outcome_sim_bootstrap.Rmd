@@ -1,0 +1,330 @@
+---
+title: "Simulation_analysis_linear_regression_outcome"
+author: "Junting Ren"
+date: "12/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(doParallel) # for parallel computing
+source("../functions/SCB_dense.R")
+source("../functions/SCB_to_CS.R")
+source("../functions/plot_cs.R")
+source("../functions/noises.R") # for the noise functions
+source("../functions/regression_outcome_scb.R")
+```
+
+
+# linear regression simulation for confidence set
+Here is the model we are going to simulate from 
+$$
+y = \beta_0 + \beta_1 x_1 + \beta_2x_1^2 + \beta_3x_1^3+\beta_4 x_2 + \beta_5 x_2^2 + \beta_6x_2^3 + \epsilon
+$$
+The plotting is going to be a 2d plane (x1, x2) with colors indicating the y values.
+
+```{r}
+num_levels = 5000
+n_sim = 5000
+beta = c(-1,1,0.5,-1.1, -0.5, 0.8, -1.1)
+n_boot = 2000
+alpha = 0.05
+sd_error = 2
+model = "y ~ poly(x1,3)+poly(x2,3)"
+x1 =  seq(-1,1,length.out = 100)
+x2 = seq(-1,1,length.out = 100)
+grid_df = data.frame( expand.grid(x1 = x1, x2 =  x2) )# dataset for model fit inside the function
+pred_data =as.matrix(cbind(x0 = rep(1,100*100), expand.grid(x1 = x1, x2 =  x2) )) # for producing the true mean
+# generate the true mean for checking the containment
+y_true_pred_data = pred_data[,1]*beta[1] + pred_data[,2]*beta[2]+(pred_data[,2]^2)*beta[3] +(pred_data[,2]^3)*beta[4] +
+  (pred_data[,3])*beta[5] +  (pred_data[,3]^2)*beta[6] +  (pred_data[,3]^3)*beta[7]
+true_mean_matrix = data.frame(pred_data, y_true = y_true_pred_data) %>% dplyr::select(x1,x2, y_true)%>% 
+  pivot_wider(names_from = x2, values_from = y_true) %>% column_to_rownames("x1") %>% as.matrix()
+levels = seq(min(y_true_pred_data), max(y_true_pred_data), length.out = num_levels)
+random_level = T #whether the levels are random or just quantiles of the data
+```
+
+
+## Showcase of confidence set 
+```{r}
+n = 500
+X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 =  rnorm(n))
+y =  X[,1]*beta[1] + X[,2]*beta[2]+(X[,2]^2)*beta[3] +(X[,2]^3)*beta[4] +
+  (X[,3])*beta[5] +  (X[,3]^2)*beta[6] +  (X[,3]^3)*beta[7]+ rnorm(n, sd=sd_error)
+data_fit = data.frame(y, dplyr::select(data.frame(X), x1, x2))
+SCB = cbind(SCB_linear_outcome(df_fit = data_fit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha),y_true = y_true_pred_data)
+scb_up_matrix = SCB %>% select(x1,x2, UpperBound)%>% 
+      pivot_wider(names_from = x2, values_from = UpperBound) %>% column_to_rownames("x1") %>% as.matrix()
+est_matrix = SCB %>% select(x1,x2, Mean)%>% 
+      pivot_wider(names_from = x2, values_from = Mean) %>% column_to_rownames("x1") %>% as.matrix()
+scb_low_matrix = SCB %>% select(x1,x2, LowerBound)%>% 
+      pivot_wider(names_from = x2, values_from = LowerBound) %>% column_to_rownames("x1") %>% as.matrix()
+confidence_set = scb_to_cs(scb_up_matrix,scb_low_matrix, levels = c(1,1.5,2,3,4,5),x1 = x1, x2 = x2,
+                              true_mean = true_mean_matrix,est_mean = est_matrix, return_contain_only = T, return_plot = T)
+confidence_set$plot_cs
+```
+
+
+
+
+## Start the simulation
+```{r}
+NVec =c(50, 100, 200, 300, 400,500)
+#NVec =c(200 )
+cl <- makeCluster(detectCores()-1)
+registerDoParallel(cl)
+scb_contain_v = c()
+upper5000_contain_v = c()
+upper1000_contain_v = c()
+upper500_contain_v = c()
+upper200_contain_v = c()
+upper100_contain_v = c()
+upper50_contain_v = c()
+upper25_contain_v = c()
+upper10_contain_v = c()
+upper5_contain_v = c()
+
+for(n in NVec){
+  p_result = foreach(t=1:n_sim,.errorhandling = "pass", 
+                          .inorder = F,.verbose	=F, .packages = "tidyverse", .export = "plot_cs") %dopar% {
+    #X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 = rnorm(n))
+    X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 =  rnorm(n))
+    y =  X[,1]*beta[1] + X[,2]*beta[2]+(X[,2]^2)*beta[3] +(X[,2]^3)*beta[4] +
+      (X[,3])*beta[5] +  (X[,3]^2)*beta[6] +  (X[,3]^3)*beta[7]+ rnorm(n, sd=sd_error)
+    data_fit = data.frame(y, dplyr::select(data.frame(X), x1, x2))
+    SCB =  cbind(SCB_linear_outcome(df_fit = data_fit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha),y_true = y_true_pred_data)
+    scb_up_matrix = SCB %>% select(x1,x2, UpperBound)%>% 
+      pivot_wider(names_from = x2, values_from = UpperBound) %>% column_to_rownames("x1") %>% as.matrix()
+    scb_low_matrix = SCB %>% select(x1,x2, LowerBound)%>% 
+      pivot_wider(names_from = x2, values_from = LowerBound) %>% column_to_rownames("x1") %>% as.matrix()
+    confidence_set = scb_to_cs(scb_up_matrix,scb_low_matrix, levels = levels,
+                               true_mean = true_mean_matrix, return_contain_only = T)
+    upper5000 = confidence_set$contain_all
+    if(random_level){
+      upper1000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 1000)])
+      upper500= all(confidence_set$contain_individual[sample(1:num_levels, size = 500)])
+      upper200 = all(confidence_set$contain_individual[sample(1:num_levels, size = 200)])
+      upper100 = all(confidence_set$contain_individual[sample(1:num_levels, size = 100)])
+      upper50 = all(confidence_set$contain_individual[sample(1:num_levels, size = 50)])
+      upper25 = all(confidence_set$contain_individual[sample(1:num_levels, size = 25)])
+      upper10 = all(confidence_set$contain_individual[sample(1:num_levels, size = 10)])
+      upper5 = all(confidence_set$contain_individual[sample(1:num_levels, size = 5)])
+    }else{
+      upper1000 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 1000)])
+      upper500= all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 500)])
+      upper200 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 200)])
+      upper100 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 100)])
+      upper50 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 50)])
+      upper25 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 25)])
+      upper10 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 10)])
+      upper5 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 5)])
+    }
+    cover_scb  = SCB %>% 
+      mutate(contain = y_true >= LowerBound & y_true <= UpperBound) %>% 
+      pull(contain) %>% 
+      all()
+    list(upper5000 = upper5000, upper1000= upper1000,
+         upper500= upper500, upper200 = upper200,
+         upper100 = upper100, upper50 = upper50,
+         upper25 = upper25,
+         upper10 = upper10, upper5 =upper5,
+         cover_scb =cover_scb
+         )
+    # list(cover_scb = cover_scb)
+  }
+  scb_contain_v = c(scb_contain_v,mean(sapply(p_result, function(x) x$cover_scb)))
+  upper5000_contain_v = c(upper5000_contain_v, mean(sapply(p_result, function(x) x$upper5000)))
+  upper1000_contain_v = c(upper1000_contain_v, mean(sapply(p_result, function(x) x$upper1000)))
+  upper500_contain_v = c(upper500_contain_v, mean(sapply(p_result, function(x) x$upper500)))
+  upper200_contain_v = c(upper200_contain_v, mean(sapply(p_result, function(x) x$upper200)))
+  upper100_contain_v = c(upper100_contain_v, mean(sapply(p_result, function(x) x$upper100)))
+  upper50_contain_v = c(upper50_contain_v, mean(sapply(p_result, function(x) x$upper50)))
+  upper25_contain_v = c(upper25_contain_v, mean(sapply(p_result, function(x) x$upper25)))
+  upper10_contain_v = c(upper10_contain_v, mean(sapply(p_result, function(x) x$upper10)))
+  upper5_contain_v = c(upper5_contain_v, mean(sapply(p_result, function(x) x$upper5)))
+}
+
+result_df_linear = data.frame(N =NVec,
+           Upper5 = upper5_contain_v,
+           Upper10 = upper10_contain_v,
+           Upper25 = upper25_contain_v,
+           Upper50 = upper50_contain_v,
+           Upper100 = upper100_contain_v,
+           Upper200 = upper200_contain_v,
+           Upper500 = upper500_contain_v,
+           Upper1000 = upper1000_contain_v,
+           upper5000 = upper5000_contain_v,
+           scb = scb_contain_v
+           )
+result_df_linear
+```
+
+
+
+# Logistic regression simulation for confidence set
+Here is the model we are going to simulate from 
+$$
+logit(x) = \beta_0 + \beta_1 x_1 + \beta_2x_1^2 + \beta_3x_1^3+\beta_4 x_2 + \beta_5 x_2^2 + \beta_6x_2^3 
+$$
+The plotting is going to be a 2d plane (x1, x2) with colors indicating the y values.
+
+
+## Similation parameters for logistic regression
+```{r}
+# have to make sure that extreme values do not overshoots the expit, or else the model will not be able to estimate the coeffcient accurately.
+num_levels = 5000
+beta = c(2,1,0.5,-1.2, -0.5, 1.8, 1.1)
+model = "y ~ poly(x1,3) + poly(x2,3)"
+# alpha = 0.05
+# n_boot = 1000
+x1 =  seq(-1,1,length.out = 100)
+x2 = seq(-1,1,length.out = 100)
+grid_df = data.frame( expand.grid(x1 = x1, x2 =  x2) )# dataset for model fit inside the function
+pred_data =as.matrix(cbind(x0 = rep(1,100*100), expand.grid(x1 = x1, x2 =  x2) )) # for producing the true mean
+y_true_pred_data = expit(pred_data[,1]*beta[1] + pred_data[,2]*beta[2]+(pred_data[,2]^2)*beta[3] +(pred_data[,2]^3)*beta[4] +
+  (pred_data[,3])*beta[5] +  (pred_data[,3]^2)*beta[6] +  (pred_data[,3]^3)*beta[7])
+true_mean_matrix = data.frame(pred_data, y_true = y_true_pred_data) %>% dplyr::select(x1,x2, y_true)%>% 
+      pivot_wider(names_from = x2, values_from = y_true) %>% column_to_rownames("x1") %>% as.matrix()
+levels = seq(min(y_true_pred_data), max(y_true_pred_data), length.out = num_levels)
+random_level = T #whether the levels are random or just quantiles of the data
+```
+
+## Showcase of confidence set 
+```{r}
+n = 500
+X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 = rnorm(n))
+linear = X[,1]*beta[1] + X[,2]*beta[2]+(X[,2]^2)*beta[3] +(X[,2]^3)*beta[4] +
+  (X[,3])*beta[5] +  (X[,3]^2)*beta[6] +  (X[,3]^3)*beta[7]
+y = rep(0,n)
+y_true = rep(0,n)
+for(i in 1:n){
+  y[i] = rbinom(1,1, prob = 1/(1+exp(-linear[i])))
+  y_true[i] = 1/(1+exp(-linear[i]))
+}
+df_fit = data.frame(y, dplyr::select(data.frame(X), x1, x2))
+SCB = cbind(SCB_logistic_outcome(df_fit = df_fit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha), 
+            y_true_pred_data) 
+est_matrix = SCB %>% select(x1,x2, Mean)%>% 
+      pivot_wider(names_from = x2, values_from = Mean) %>% column_to_rownames("x1") %>% as.matrix()
+scb_up_matrix = SCB %>% select(x1,x2, UpperBound)%>%
+  pivot_wider(names_from = x2, values_from = UpperBound) %>% column_to_rownames("x1") %>% as.matrix()
+scb_low_matrix = SCB %>% select(x1,x2, LowerBound)%>%
+  pivot_wider(names_from = x2, values_from = LowerBound) %>% column_to_rownames("x1") %>% as.matrix()
+confidence_set = scb_to_cs(scb_up_matrix,scb_low_matrix, levels = c(0.1, 0.2, 0.4,0.5, 0.6),x1 = x1, x2 = x2,
+                           true_mean = true_mean_matrix,est_mean = est_matrix, return_contain_only = T, return_plot = T)
+confidence_set$plot_cs
+```
+
+
+## Start the simulation
+```{r}
+#NVec =c(5000)
+#cl <- makeCluster(detectCores()-1)
+#registerDoParallel(cl)
+scb_contain_v = c()
+upper5000_contain_v = c()
+upper1000_contain_v = c()
+upper500_contain_v = c()
+upper200_contain_v = c()
+upper100_contain_v = c()
+upper50_contain_v = c()
+upper25_contain_v = c()
+upper10_contain_v = c()
+upper5_contain_v = c()
+
+for(n in NVec){
+  p_result = foreach(t=1:n_sim,.errorhandling = "pass", 
+                          .inorder = F,.verbose	=F, .packages = "tidyverse", .export = "plot_cs") %dopar% {
+    #X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 = rnorm(n))
+    X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 =  rnorm(n))
+    linear =  X[,1]*beta[1] + X[,2]*beta[2]+(X[,2]^2)*beta[3] +(X[,2]^3)*beta[4] +
+      (X[,3])*beta[5] +  (X[,3]^2)*beta[6] +  (X[,3]^3)*beta[7]
+    y = rep(0,n)
+    for(i in 1:n){
+      y[i] = rbinom(1,1, prob = 1/(1+exp(-linear[i])))
+    }
+    df_fit = data.frame(y, dplyr::select(data.frame(X), x1, x2))
+    SCB = cbind(SCB_logistic_outcome(df_fit = df_fit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha),y_true = y_true_pred_data)
+    scb_up_matrix = SCB %>% select(x1,x2, UpperBound)%>% 
+      pivot_wider(names_from = x2, values_from = UpperBound) %>% column_to_rownames("x1") %>% as.matrix()
+    scb_low_matrix = SCB %>% select(x1,x2, LowerBound)%>% 
+      pivot_wider(names_from = x2, values_from = LowerBound) %>% column_to_rownames("x1") %>% as.matrix()
+    confidence_set = scb_to_cs(scb_up_matrix,scb_low_matrix, levels = levels,
+                               true_mean = true_mean_matrix, return_contain_only = T)
+    upper5000 = confidence_set$contain_all
+    if(random_level){
+      upper1000 = all(confidence_set$contain_individual[sample(1:num_levels, size = 1000)])
+      upper500= all(confidence_set$contain_individual[sample(1:num_levels, size = 500)])
+      upper200 = all(confidence_set$contain_individual[sample(1:num_levels, size = 200)])
+      upper100 = all(confidence_set$contain_individual[sample(1:num_levels, size = 100)])
+      upper50 = all(confidence_set$contain_individual[sample(1:num_levels, size = 50)])
+      upper25 = all(confidence_set$contain_individual[sample(1:num_levels, size = 25)])
+      upper10 = all(confidence_set$contain_individual[sample(1:num_levels, size = 10)])
+      upper5 = all(confidence_set$contain_individual[sample(1:num_levels, size = 5)])
+    }else{
+      upper1000 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 1000)])
+      upper500= all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 500)])
+      upper200 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 200)])
+      upper100 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 100)])
+      upper50 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 50)])
+      upper25 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 25)])
+      upper10 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 10)])
+      upper5 = all(confidence_set$contain_individual[
+        seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 5)])
+    }
+    cover_scb  = SCB %>% 
+      mutate(contain = y_true >= LowerBound & y_true <= UpperBound) %>% 
+      pull(contain) %>% 
+      all()
+    list(upper5000 = upper5000, upper1000= upper1000,
+         upper500= upper500, upper200 = upper200,
+         upper100 = upper100, upper50 = upper50,
+         upper25 = upper25,
+         upper10 = upper10, upper5 =upper5,
+         cover_scb =cover_scb
+         )
+    # list(cover_scb = cover_scb)
+  }
+  scb_contain_v = c(scb_contain_v,mean(sapply(p_result, function(x) x$cover_scb)))
+  upper5000_contain_v = c(upper5000_contain_v, mean(sapply(p_result, function(x) x$upper5000)))
+  upper1000_contain_v = c(upper1000_contain_v, mean(sapply(p_result, function(x) x$upper1000)))
+  upper500_contain_v = c(upper500_contain_v, mean(sapply(p_result, function(x) x$upper500)))
+  upper200_contain_v = c(upper200_contain_v, mean(sapply(p_result, function(x) x$upper200)))
+  upper100_contain_v = c(upper100_contain_v, mean(sapply(p_result, function(x) x$upper100)))
+  upper50_contain_v = c(upper50_contain_v, mean(sapply(p_result, function(x) x$upper50)))
+  upper25_contain_v = c(upper25_contain_v, mean(sapply(p_result, function(x) x$upper25)))
+  upper10_contain_v = c(upper10_contain_v, mean(sapply(p_result, function(x) x$upper10)))
+  upper5_contain_v = c(upper5_contain_v, mean(sapply(p_result, function(x) x$upper5)))
+}
+
+result_df_logistic = data.frame(N =NVec,
+           Upper5 = upper5_contain_v,
+           Upper10 = upper10_contain_v,
+           Upper25 = upper25_contain_v,
+           Upper50 = upper50_contain_v,
+           Upper100 = upper100_contain_v,
+           Upper200 = upper200_contain_v,
+           Upper500 = upper500_contain_v,
+           Upper1000 = upper1000_contain_v,
+           upper5000 = upper5000_contain_v,
+           scb = scb_contain_v
+           )
+result_df_logistic
+save.image("regression_outcome_bootstrap2.RData")
+```

@@ -1,0 +1,550 @@
+---
+title: "Plotting for simulation"
+author: "Junting Ren"
+date: "1/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("../functions/SCB_dense.R")
+source("../functions/SCB_to_CS.R")
+source("../functions/noises.R") # for the noise functions
+source("../functions/plot_cs.R") 
+#library(SCBfda) # for the noise functions
+library(SIRF)
+library(tidyverse)
+library(doParallel) # for parallel computing
+library(cope)
+library(patchwork)
+library(latex2exp)
+library(RColorBrewer)
+date = "y2021_m01_d06"
+
+```
+# Dense functional data
+## Demonstration of confidence sets in 1D
+```{r}
+save = T # whether to save the plots
+load( paste( "dense_functional_sim.RData" ) )
+N = NVec[2]
+x = seq( 0, 1, length.out = 1000 )
+dat_true = mu_ModelA(x)
+set.seed(2022)
+M = FunctionalDataSample( N =N,
+                          x = x,
+                          mu =mu_ModelA,
+                          noise = BernsteinSumNoise,
+                          sigma = sigma_ModelA,
+                          sd_ObsNoise =0)
+SCB = SCB_dense(M)
+est_mean <- apply(M, 1, mean)
+source("../functions/plot_cs.R") 
+#debug(plot_cs)
+plot_cs(SCB, levels = c(0.2,0.8, 0), x = x, y = x,mu_hat = est_mean, mu_true =  dat_true, together = F, xlab = "s")
+
+if(save){
+  ggsave("./figures/dense_1dshowcase.png")
+}
+
+```
+Plotting idea for 1d: we have a vector of T or F same length of the x, then we can change this vector to ifelse(v, 1, 0)
+
+## Demonstration of confidence sets in 2D
+```{r}
+N = NVec[4]
+x = seq( 0, 1, length.out = 50 )
+dat_true = mu_ModelB(x)
+set.seed(2023)
+M = FunctionalDataSample( N = N,
+                          x = x,
+                          mu =mu_ModelB,
+                          noise = noise_ModelB,
+                          sigma = sigma_ModelB,
+                          sd_ObsNoise = 0 )
+SCB = SCB_dense(M)
+est_mean <- apply(M, 1:2, mean)
+source("../functions/plot_cs.R") 
+#debug(plot_cs)
+p1 = plot_cs(SCB, levels = c(0.3,0.5,0.7), x = x, y = x, mu_true =  dat_true,mu_hat = est_mean, together = F, 
+             xlab = TeX(r'($s_1$)'),ylab = TeX(r'($s_2$)'))
+p2 = plot_cs(SCB, levels = c(0.3,0.5,0.7), x = x, y = x, mu_true =  dat_true,mu_hat = est_mean, together = T,
+             xlab = TeX(r'($s_1$)'),ylab = TeX(r'($s_2$)'))
+p = p2/p1
+p
+if(save){
+  ggsave("./figures/dense_2dshowcase.png", plot = p, width = unit(10, "cm"), height = unit(7, "cm"))
+}
+```
+
+
+## Dense functional data result plotting
+```{r}
+level = 0.95
+load("dense_functional_sim_1D_cope.RData")
+#1D
+df_result_sim = result_frame_1d %>%
+  select(N, SCI = SCB, Upper1000, Upper100, Upper25, Upper10, Upper5, cope5, cope10, cope25)%>% 
+  pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
+  mutate(coverage_rate = coverage_rate*100,
+         N = as_factor(N),
+         Simulation = fct_relevel(Simulation, levels = c("Upper5","Upper10",  
+                                                         "Upper25", "Upper100",
+                                                         "Upper1000","SCI", 
+                                                         "cope25","cope10","cope5"
+                                                          )))
+  
+mypal <- colorRampPalette(brewer.pal(6, "PuBu"))
+mypal2 <- colorRampPalette(rev(brewer.pal(6, "YlOrRd")))
+result_sim_plotA = df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group = Simulation,color = Simulation)) + 
+  geom_line()+
+  geom_point(aes(shape = Simulation)) +
+  scale_shape_manual(values = c(rep(1,6), rep(2, 4)),
+                     labels = c(TeX("$5$ levels"),TeX("$10$ levels"), 
+                                TeX("$25$ levels"),TeX(" $10 ^2$ levels"),
+                                TeX(" $10^3$ levels"),"SCI", 
+                                "25 levels bonf","10 levels bonf","5 levels bonf")
+  ) +
+  scale_colour_manual(values = c(mypal(6), mypal2(4)),
+                      labels = c(TeX("$5$ levels"),TeX("$10$ levels"), 
+                                 TeX("$25$ levels"),TeX(" $10 ^2$ levels"),
+                                 TeX(" $10^3$ levels"),"SCI", 
+                                 "25 levels bonf","10 levels bonf","5 levels bonf")
+  ) +
+  ylim(c(69,100)) +
+  geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+  theme_light() +
+  ggtitle("1D dense data coverage rate")+
+  theme(legend.position = c(0.75, 0.25),legend.key.size = unit(0.2, 'cm')) +
+  ylab("Coverage rate")+ 
+  xlab("Number of samples N") +
+  theme(axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        text = element_text(size = 13))
+
+# df_result_sim = result_frame_1d %>% 
+#   select(N, SCI = SCB, Upper1000, Upper100, Upper25, Upper10, Upper5)%>% 
+#   pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
+#   mutate(coverage_rate = coverage_rate*100,
+#          N = as_factor(N),
+#          Simulation = fct_relevel(Simulation, levels = rev(c("SCI", "Upper1000",
+#                                                          "Upper100", "Upper25",
+#                                                          "Upper10", "Upper5"))))
+# 
+# result_sim_plotA = df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group = Simulation,color = Simulation)) + 
+#   geom_line()+
+#   geom_point() +ylim(c(84,100)) +
+#   geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+#   # scale_colour_discrete(labels = c("SCB", TeX(" $10^3$ levels"), 
+#   #                                  TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+#   #                                  TeX("$10$ levels"), TeX("$5$ levels"))) +
+#   theme_light() +
+#   ylim(c(69,100)) +
+#   ggtitle("1D dense data coverage rate")+
+#   theme(legend.position = c(0.75, 0.2),legend.key.size = unit(0.2, 'cm'),
+#         plot.title = element_text(face = "bold", hjust = 0.5)) +
+#   ylab("Coverage rate") +
+#   xlab("Number of samples N") +
+#   scale_color_brewer(labels = rev(c("SCI", TeX(" $10^3$ levels"), 
+#                                     TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+#                                     TeX("$10$ levels"), TeX("$5$ levels"))),palette = "PuBu", direction = 1)
+
+
+#2D
+load( paste( "dense_functional_sim.RData" ) )
+df_result_sim = result_frame_2d %>%
+  select(N, SCI = SCB, Upper1000, Upper100, Upper25, Upper10, Upper5, cope5, cope10, cope25)%>% 
+  pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
+  mutate(coverage_rate = coverage_rate*100,
+         N = as_factor(N),
+         Simulation = fct_relevel(Simulation, levels = c("Upper5","Upper10",  
+                                                         "Upper25", "Upper100",
+                                                         "Upper1000","SCI", 
+                                                         "cope25","cope10","cope5"
+                                                          )))
+  
+mypal <- colorRampPalette(brewer.pal(6, "PuBu"))
+mypal2 <- colorRampPalette(rev(brewer.pal(6, "YlOrRd")))
+result_sim_plotB = df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group = Simulation,color = Simulation)) + 
+  geom_line()+
+  geom_point(aes(shape = Simulation)) +
+  scale_shape_manual(values = c(rep(1,6), rep(2, 4)),
+                     labels = c(TeX("$5$ levels"),TeX("$10$ levels"), 
+                                TeX("$25$ levels"),TeX(" $10 ^2$ levels"),
+                                TeX(" $10^3$ levels"),"SCI", 
+                                "25 levels bonf","10 levels bonf","5 levels bonf")
+  ) +
+  scale_colour_manual(values = c(mypal(6), mypal2(4)),
+                      labels = c(TeX("$5$ levels"),TeX("$10$ levels"), 
+                                 TeX("$25$ levels"),TeX(" $10 ^2$ levels"),
+                                 TeX(" $10^3$ levels"),"SCI", 
+                                 "25 levels bonf","10 levels bonf","5 levels bonf")
+  ) +
+  ylim(c(69,100)) +
+  geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+  theme_light() +
+  ggtitle("2D dense data coverage rate")+
+  theme(legend.position = c(0.75, 0.25),legend.key.size = unit(0.2, 'cm')) +
+  ylab("Coverage rate")+ 
+  xlab("Number of samples N") +
+  theme(axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        text = element_text(size = 13))
+result_sim_plotA + result_sim_plotB
+if(save){
+ ggsave("./figures/dense_1_and_2dsim_results.png", width = unit(10, "cm"), height = unit(5, "cm")) 
+}
+```
+
+Simulation coverage table for 1D
+```{r}
+knitr::kable(result_frame_1d)
+```
+
+Simulation coverage table for 2D
+```{r}
+knitr::kable(result_frame_2d)
+```
+
+
+# Regression outcome simulation
+```{r}
+load("regression_outcome_bootstrap.RData")
+```
+
+
+## Demonstration of linear regression outcome with 2 covariates
+```{r}
+source("../functions/plot_cs.R") 
+source("../functions/SCB_to_CS.R")
+library(patchwork)
+beta = c(-1,1,0.5,-1.1, -0.5, 0.8, -1.1)
+n_boot = 2000
+alpha = 0.05
+sd_error = 2
+model = "y ~ poly(x1,3)+poly(x2,3)"
+x1 =  seq(-1,1,length.out = 100)
+x2 = seq(-1,1,length.out = 100)
+grid_df = data.frame( expand.grid(x1 = x1, x2 =  x2) )# dataset for model fit inside the function
+pred_data =as.matrix(cbind(x0 = rep(1,100*100), expand.grid(x1 = x1, x2 =  x2) )) # for producing the true mean
+# generate the true mean for checking the containment
+y_true_pred_data = pred_data[,1]*beta[1] + pred_data[,2]*beta[2]+(pred_data[,2]^2)*beta[3] +(pred_data[,2]^3)*beta[4] +
+  (pred_data[,3])*beta[5] +  (pred_data[,3]^2)*beta[6] +  (pred_data[,3]^3)*beta[7]
+true_mean_matrix = data.frame(pred_data, y_true = y_true_pred_data) %>% dplyr::select(x1,x2, y_true)%>% 
+  pivot_wider(names_from = x2, values_from = y_true) %>% column_to_rownames("x1") %>% as.matrix()
+n = 500
+X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 =  rnorm(n))
+set.seed(2022)
+y =  X[,1]*beta[1] + X[,2]*beta[2]+(X[,2]^2)*beta[3] +(X[,2]^3)*beta[4] +
+  (X[,3])*beta[5] +  (X[,3]^2)*beta[6] +  (X[,3]^3)*beta[7]+ rnorm(n, sd=sd_error)
+data_fit = data.frame(y, dplyr::select(data.frame(X), x1, x2))
+SCB = cbind(SCB_linear_outcome(df_fit = data_fit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha),y_true = y_true_pred_data)
+scb_up_matrix = SCB %>% select(x1,x2, UpperBound)%>% 
+      pivot_wider(names_from = x2, values_from = UpperBound) %>% column_to_rownames("x1") %>% as.matrix()
+est_matrix = SCB %>% select(x1,x2, Mean)%>% 
+      pivot_wider(names_from = x2, values_from = Mean) %>% column_to_rownames("x1") %>% as.matrix()
+scb_low_matrix = SCB %>% select(x1,x2, LowerBound)%>% 
+      pivot_wider(names_from = x2, values_from = LowerBound) %>% column_to_rownames("x1") %>% as.matrix()
+confidence_set = scb_to_cs(scb_up_matrix,scb_low_matrix, levels = c(-1,-0.5,0),x1 = x1, x2 = x2,
+                              true_mean = true_mean_matrix,est_mean = est_matrix, return_contain_only = T, return_plot = T, xlab = TeX(r'($x_1$)'), ylab = TeX(r'($x_2$)'))
+p = confidence_set$plot_cs[[1]]/confidence_set$plot_cs[[2]]
+p
+if(save){
+  ggsave("./figures/linear_regression_outcome_showcase.png", plot = p, width = unit(10, "cm"), height = unit(7, "cm"))
+}
+```
+
+```{r}
+fit = lm(as.formula(model), data_fit)
+cov_beta = vcov(fit)
+X_design = model.matrix(formula(~ poly(x1,3)+poly(x2,3)), data = data.frame(pred_data))
+cov_pred = X_design %*% cov_beta %*% t(X_design)
+cor_pred = cov2cor(cov_pred)
+diag(cor_pred) = NA
+mean(cor_pred, na.rm = T)
+```
+
+## Demonstration of logistics regression outcome with 2 covariates
+```{r}
+beta = c(-1,1,0.5,-1.1, -0.5, 0.8, -1.1)
+model = "y ~ poly(x1,3) + poly(x2,3)"
+# alpha = 0.05
+# n_boot = 1000
+x1 =  seq(-1,1,length.out = 100)
+x2 = seq(-1,1,length.out = 100)
+grid_df = data.frame( expand.grid(x1 = x1, x2 =  x2) )# dataset for model fit inside the function
+pred_data =as.matrix(cbind(x0 = rep(1,100*100), expand.grid(x1 = x1, x2 =  x2) )) # for producing the true mean
+y_true_pred_data = expit(pred_data[,1]*beta[1] + pred_data[,2]*beta[2]+(pred_data[,2]^2)*beta[3] +(pred_data[,2]^3)*beta[4] +
+  (pred_data[,3])*beta[5] +  (pred_data[,3]^2)*beta[6] +  (pred_data[,3]^3)*beta[7])
+true_mean_matrix = data.frame(pred_data, y_true = y_true_pred_data) %>% dplyr::select(x1,x2, y_true)%>% 
+      pivot_wider(names_from = x2, values_from = y_true) %>% column_to_rownames("x1") %>% as.matrix()
+n = 500
+X = cbind(x0 = rep(1,n), x1 = rnorm(n), x2 = rnorm(n))
+linear = X[,1]*beta[1] + X[,2]*beta[2]+(X[,2]^2)*beta[3] +(X[,2]^3)*beta[4] +
+  (X[,3])*beta[5] +  (X[,3]^2)*beta[6] +  (X[,3]^3)*beta[7]
+y = rep(0,n)
+y_true = rep(0,n)
+set.seed(2022)
+for(i in 1:n){
+  y[i] = rbinom(1,1, prob = 1/(1+exp(-linear[i])))
+  y_true[i] = 1/(1+exp(-linear[i]))
+}
+df_fit = data.frame(y, dplyr::select(data.frame(X), x1, x2))
+SCB = cbind(SCB_logistic_outcome(df_fit = df_fit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha), 
+            y_true_pred_data) 
+scb_up_matrix = SCB %>% select(x1,x2, UpperBound)%>%
+  pivot_wider(names_from = x2, values_from = UpperBound) %>% column_to_rownames("x1") %>% as.matrix()
+est_matrix = SCB %>% select(x1,x2, Mean)%>% 
+      pivot_wider(names_from = x2, values_from = Mean) %>% column_to_rownames("x1") %>% as.matrix()
+scb_low_matrix = SCB %>% select(x1,x2, LowerBound)%>%
+  pivot_wider(names_from = x2, values_from = LowerBound) %>% column_to_rownames("x1") %>% as.matrix()
+confidence_set = scb_to_cs(scb_up_matrix,scb_low_matrix, levels = c(0.4,0.5, 0.6),x1 = x1, x2 = x2,est_mean = est_matrix,true_mean = true_mean_matrix, return_contain_only = T, return_plot = T,
+                           xlab = TeX(r'($x_1$)'), ylab = TeX(r'($x_2$)'))
+p = confidence_set$plot_cs[[1]]/confidence_set$plot_cs[[2]]
+p
+if(save){
+  ggsave("./figures/logistic_regression_outcome_showcase.png", plot = p, width = unit(10, "cm"), height = unit(7, "cm"))
+}
+```
+
+
+```{r}
+fit_glm = glm(as.formula(model), df_fit,family = binomial())
+cov_beta_glm = vcov(fit_glm)
+X_design_glm = model.matrix(formula(~ poly(x1,3)+poly(x2,3)), data = data.frame(pred_data))
+cov_pred_glm = X_design_glm %*% cov_beta_glm %*% t(X_design_glm)
+cor_pred_glm = cov2cor(cov_pred_glm)
+diag(cor_pred_glm) = NA
+sample_indx = sample(1:length(c(cor_pred_glm[cor_pred_glm!=0])), 10000)
+df_cor = data.frame(Logistic = abs(c(cor_pred_glm[cor_pred_glm!=0])[sample_indx]),
+                    Linear = abs(c(cor_pred[cor_pred!=0])[sample_indx])) %>% 
+  pivot_longer(everything(), names_to = "Model", values_to = "Correlation") %>% 
+  distinct()
+
+```
+
+## Simulation result for regression outcome
+```{r}
+load("regression_outcome_bootstrap2.RData")
+level = 0.95
+#Linear
+result_df_linear_final = result_df_linear
+df_result_sim = result_df_linear %>% 
+  mutate(SCI = scb) %>% filter(N !=50) %>% 
+  select(N, SCI, Upper1000, Upper100, Upper25, Upper10, Upper5)%>% 
+  pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
+  mutate(coverage_rate = coverage_rate*100,
+         N = as_factor(N),
+         Simulation = fct_relevel(Simulation, levels = rev(c("SCI", "Upper1000",
+                                                         "Upper100", "Upper25",
+                                                         "Upper10", "Upper5"))))
+
+result_sim_linear = df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group = Simulation,color = Simulation)) + 
+  geom_line()+
+  geom_point() +
+  ylim(c(90,100)) +
+  geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+  # scale_colour_discrete(labels = c("SCB", TeX(" $10^3$ levels"), 
+  #                                  TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+  #                                  TeX("$10$ levels"), TeX("$5$ levels"))) +
+  theme_light() +
+  ggtitle("Linear regression")+
+  theme(legend.position = c(0.75, 0.2),legend.key.size = unit(0.2, 'cm'),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        text = element_text(size = 13)) +
+  ylab("Coverage rate") +
+  xlab("Number of samples N") +
+  scale_color_brewer(labels = rev(c("SCB", TeX(" $10^3$ levels"), 
+                                    TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+                                    TeX("$10$ levels"), TeX("$5$ levels"))),
+                     palette = "PuBu", direction = 1)
+
+load("regression_outcome_bootstrap.RData")
+result_df_logistic_final = result_df_logistic
+#Logistic
+df_result_sim = result_df_logistic %>%
+  mutate(SCI = scb) %>% filter(N !=50) %>% 
+  select(N, SCI, Upper1000, Upper100, Upper25, Upper10, Upper5)%>% 
+  pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
+  mutate(coverage_rate = coverage_rate*100,
+         N = as_factor(N),
+         Simulation = fct_relevel(Simulation, levels = rev(c("SCI", "Upper1000",
+                                                         "Upper100", "Upper25",
+                                                         "Upper10", "Upper5"))))
+  
+result_sim_logistic = df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group = Simulation,color = Simulation)) + 
+  geom_line()+
+  geom_point() +
+  ylim(c(90,100)) +
+  geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+  # scale_colour_discrete(labels = c("SCB", TeX(" $10^3$ levels"), 
+  #                                  TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+  #                                  TeX("$10$ levels"), TeX("$5$ levels"))) +
+  theme_light() +
+  ggtitle("Logistic regression")+
+  theme(legend.position = c(0.75, 0.2),legend.key.size = unit(0.2, 'cm'),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        text = element_text(size = 13)) +
+  ylab("Coverage rate") +
+  xlab("Number of samples N") +
+  scale_color_brewer(labels = rev(c("SCI", TeX(" $10^3$ levels"), 
+                                    TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+                                    TeX("$10$ levels"), TeX("$5$ levels"))),
+                     palette = "PuBu", direction = 1)+ 
+  theme(axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+#result_sim_linear + result_sim_logistic
+
+
+
+result_sim_linear + result_sim_logistic
+if(save){
+ ggsave("./figures/regression_outcome_results.png", width = unit(10, "cm"), height = unit(5, "cm")) 
+}
+
+```
+Linear results
+```{r}
+result_df_linear_final
+```
+
+
+Logistic results
+```{r}
+result_df_logistic_final
+```
+
+
+
+# Regression coefficient simulations
+```{r}
+load("regression_coef_result.RData")
+source("../functions/SCB_dense.R")
+source("../functions/SCB_to_CS.R")
+source("../functions/noises.R") # for the noise functions
+source("../functions/plot_cs.R") 
+```
+
+## showcase of coefficient discret confidence set
+```{r}
+n = 500
+X = cbind(rep(1,n), MASS::mvrnorm(n = n, mu = rep(0,dim(covariance)[1]),Sigma = covariance))
+set.seed(2022)
+y = X %*% beta +rnorm(n, sd = sd_error)
+df_fit = data.frame(y= y, X[,-1])
+SCB = cbind(SCB_regression_coef(df_fit = df_fit, model = model, n_boot = n_boot, alpha = 0.05), beta_true = beta)
+beta_names = paste("beta", 0:(M-1),sep = "")
+
+#debug(plot_cs)
+plot_cs(SCB = list(scb_up = SCB$UpperBound, scb_low = SCB$LowerBound), x = beta_names,levels = c(-2, -0.5, -0.1, 0.2), mu_true = beta, mu_hat = SCB$Mean)
+if(save){
+ ggsave("./figures/coeff_showcase.png") 
+}
+```
+black point are the estimated mean, gray are the true points.
+
+## Correlation for coefficients
+```{r}
+fit_coef = lm(y~., df_fit)
+cor_coef = cov2cor(vcov(fit_coef))
+diag(cor_coef) = NA
+df_cor_coef = data.frame(Model = "Discrete\ncoefficient", Correlation = c(abs(cor_coef))) %>% unique()
+rbind(df_cor, df_cor_coef) %>% ggplot(aes(x = Correlation, fill = Model)) +
+  geom_histogram(aes(y=..density..),bins = 100, 
+                 alpha = 0.3,position = "identity")+
+  geom_density(alpha=0.3) + theme_light() + labs(y = "Density", x = "Absolute pairwise correlations")+
+  ggtitle("")+theme(plot.title = element_text(face = "bold", hjust = 0.5), text = element_text(size = 13))
+if(save){
+  ggsave("./figures/correlation_diff_lm_glm.png", width = unit(10, "cm"), height = unit(7, "cm"))
+}
+```
+
+
+## Simulation results for regression coefficients
+```{r}
+level = 0.95
+#Linear
+df_result_sim = result_df_diff_beta %>% 
+  mutate(SCI = scb) %>% 
+  select(beta_num, SCI, upper1000, upper100, upper25,upper5000, upper8000)%>% 
+  pivot_longer(!c(beta_num), names_to = "Simulation", values_to = "coverage_rate") %>% 
+  mutate(coverage_rate = coverage_rate*100,
+         beta_num = as_factor(beta_num),
+         Simulation = fct_relevel(Simulation, 
+                                  levels=rev(c("SCI","upper8000",
+                                               "upper5000","upper1000",
+                                               "upper100", "upper25"))))
+
+result_sim_beta_num = df_result_sim %>% ggplot(aes(x = beta_num, y = coverage_rate,group = Simulation,color = Simulation)) + 
+  geom_line()+
+  geom_point() +
+  ylim(c(90,100)) +
+  geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+  # scale_colour_discrete(labels = c("SCB", TeX(" $10^3$ levels"), 
+  #                                  TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+  #                                  TeX("$10$ levels"), TeX("$5$ levels"))) +
+  theme_light() +
+  ggtitle("Regression cofficient for N=500")+
+  theme(legend.position = c(0.75, 0.2),legend.key.size = unit(0.2, 'cm'),
+        plot.title = element_text(face = "bold", hjust = 0.5)) +
+  ylab("Coverage rate") +
+  xlab("Number of coefficents M") +
+  scale_color_brewer(labels = rev(c("SCI",TeX(" $8 \\times 10^3$ levels"),
+                                    TeX(" $5 \\times 10^3$ levels"), 
+                                    TeX(" $10^3$ levels"), 
+                                    TeX(" $10 ^2$ levels"), TeX("$25$ levels"))),
+                     palette = "PuBu", direction = 1)
+
+
+#Logistic
+df_result_sim = result_df_diff_n %>%
+  mutate(SCI = scb) %>% filter(N !=200) %>% 
+  select(N, SCI, upper1000, upper100, upper25,upper5000, upper8000)%>% 
+  pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
+  mutate(coverage_rate = coverage_rate*100,
+         N = as_factor(N),
+         Simulation = fct_relevel(Simulation, 
+                                  levels=rev(c("SCI","upper8000",
+                                               "upper5000","upper1000",
+                                               "upper100", "upper25"))))
+  
+result_sim_n_beta= df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group = Simulation,color = Simulation)) + 
+  geom_line()+
+  geom_point() +
+  ylim(c(90,100)) +
+  geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+  # scale_colour_discrete(labels = c("SCB", TeX(" $10^3$ levels"), 
+  #                                  TeX(" $10 ^2$ levels"), TeX("$25$ levels"),
+  #                                  TeX("$10$ levels"), TeX("$5$ levels"))) +
+  theme_light() +
+  ggtitle("Regression cofficient for M=50")+
+  theme(legend.position = c(0.75, 0.2),legend.key.size = unit(0.2, 'cm'),
+        plot.title = element_text(face = "bold", hjust = 0.5)) +
+  ylab("Coverage rate") +
+  xlab("Number of samples N") +
+  scale_color_brewer(labels = rev(c("SCI",TeX(" $8 \\times 10^3$ levels"),
+                                    TeX(" $5 \\times 10^3$ levels"), 
+                                    TeX(" $10^3$ levels"), 
+                                    TeX(" $10 ^2$ levels"), TeX("$25$ levels"))),
+                     palette = "PuBu", direction = 1)+ 
+  theme(axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+result_sim_beta_num + result_sim_n_beta
+if(save){
+ ggsave("./figures/regression_coeff_results.png", width = unit(10, "cm"), height = unit(5, "cm")) 
+}
+```
+Sample size results
+```{r}
+result_df_diff_n
+```
+
+Number of coefficient results
+```{r}
+result_df_diff_beta
+```
+
