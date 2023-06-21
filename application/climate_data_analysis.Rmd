@@ -1,0 +1,95 @@
+---
+title: "climate_data_analysis"
+author: "Junting Ren"
+date: "3/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("../../functions/climate_functions.R")
+library(patchwork)
+save = F
+```
+
+
+
+```{r}
+library(MASS)
+library(cope)
+source("functions.r")
+
+# Load data
+####
+load("climate_data.dat")
+
+attach(temp)
+
+#Global variables.
+####
+#Confidence level for CoPE sets.
+alpha_CoPE = 0.1
+#Nominal expected false area ratio for FARE sets.
+alpha_FARE = 0.05
+#Number of realizations to produce in the MC simulations.
+N=1000
+
+#Defining the model.
+####
+# Mask on land
+mask = mask * ifelse(orog>0, 1, NA)
+
+#Define the t vectors and n.
+ta = current
+ta = ta - mean(ta)
+tb = future
+tb = tb - mean(tb)
+
+na = length(ta)
+nb = length(tb)
+n = na + nb
+
+#Define Design matrix X.
+X1 = c(rep(0,na),rep(1,nb))
+X2 = rep(1,n)
+X3 = c(ta,rep(0,nb))
+X4 = c(rep(0,na),tb)
+X = cbind(X1,X2,X3,X4)
+
+#Define the data Y.
+Y = array(0,c(length(lon),length(lat),n))
+for(j in 1:na) Y[,,j] = summer[,,j,1]
+for(j in 1:nb) Y[,,na+j] = summer[,,j,2]
+#for(j in 1:na) Y[,,j] = winter[,,j,1]
+#for(j in 1:nb) Y[,,na+j] = winter[,,j,2]
+Z = list(x = lon, y = lat, z = Y)
+correlation = "corAR1"
+temp = SCB_gls_climate(Z = Z, level = 2, X = X, w = c(1,0,0,0), correlation = correlation, mask = mask, alpha = alpha_CoPE)
+# Crop in the image
+```
+
+```{r}
+source("../../functions/plot_cs.R")
+p2 = plot_cs(list(scb_up = temp$scb_up[17:215,22:110], scb_low = temp$scb_low[17:215,22:110]), levels = c(1.5, 2,2.5,3), x = temp$x[17:215], y = temp$y[22:110], mu_hat = temp$mu_hat[17:215,22:110], xlab = "", ylab = "", level_label = T, min.size = 40, palette = "Spectral", color_level_label = "black")
+p1 = plot_cs(list(scb_up = temp$scb_up[17:215,22:110], scb_low = temp$scb_low[17:215,22:110]), levels = c(1.5,2,2.5), x = temp$x[17:215], y = temp$y[22:110], mu_hat = temp$mu_hat[17:215,22:110], xlab = "", ylab = "",together = F)
+p = p2/p1
+p
+if(save){
+  ggsave("./figures/climate_cs_result.png", plot = p, width = unit(10, "cm"), height = unit(7, "cm"))
+}
+```
+
+
+```{r}
+temp_cope = ComputeCope(Z = Z, level = 2, X = X, w = c(1,0,0,0), correlation = correlation, mask = mask)
+PlotCope(temp_cope)
+```
+
+
+```{r}
+print("threshold for SCI")
+print(temp$thres)
+print("threshold for cope")
+print(temp_cope$a_MB)
+```
+

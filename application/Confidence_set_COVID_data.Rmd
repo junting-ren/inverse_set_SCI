@@ -1,0 +1,699 @@
+---
+title: "Confidence set for UCSD COVID registry"
+author: "Junting Ren"
+date: "`r format(Sys.time(), '%A, %B %d, %Y - %X.')`"
+output:
+  html_document:
+    df_print: paged
+pandoc_args: --filter path/to/filter.py
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(tidyverse)
+library(qwraps2)
+library(ggplot2)
+library(GGally)
+require(logistf)
+library(car)
+require(patchwork)
+source("../../functions/SCB_dense.R")
+source("../../functions/SCB_to_CS.R")
+source("../../functions/plot_cs.R")
+source("../../functions/regression_outcome_scb.R")
+#install.packages("forestplot")
+library(forestplot)
+savedfilepath<-'./output/'
+downloadfilepath<-'./data/'
+# loadfile = 'COVID 2020-0321 Output (2020-07-24).xlsx'
+# correctionfile = 'Admissions COVID 2020-0727 data fixes final no pass.xlsx'
+# date_lock = "2020-07-24"
+```
+
+# Severe outcome definition: ICU, venti, intuba and death. Dataset:COVID 2020-0321 Output (2020-06-17).xlsx. Focused on positive and admitted patients. 
+# Exclusion: 20 subjects excluded by Lori for 05-22; 49 excluded for 06-15; 52 excluded for 06-17
+# sensitivity analysis 3.3: for admitted covid-19 negative population, exclude transferred patients using variable PANEL_PT (Lori: I am proposing we only include patients in the COVID-negative portion if PANEL_PT = Y)
+# sensitivity analysis 3.4: test statin * covid status interaction
+# sensitivity analysis 3.5: test statin * covid status interaction and arb* covid status interaction at the same time
+
+
+```{r warning=F}
+dat = readxl::read_xlsx(paste(downloadfilepath,'COVID 2020-0321 Output (2020-06-17).xlsx',sep=''), 
+                        skip = 1, na = "NULL") %>%  
+  #data correction
+  mutate(arb = ifelse(id == 19648914 | id == 31157396, 1, arb),
+         acei = ifelse(id == 23092315 | id == 20173894, 1, acei),
+         dm = ifelse(id == 20173894 | id == 31053533, 1, dm),
+         ckd = ifelse(id == 30487616, 1, ckd),
+         htn = ifelse(id == 20173894 | id == 31157396 | id == 31155947 | id == 30685443 | id == 24572091 | id == 31158167 | id == 31173542 | id == 30391135 | id == 31188138 | id == 12183042 | id == 22551857 | id == 31189404 | id == 31189370 | id == 23587645 | id == 31190987 | id == 31147322 | id == 31163060 | id == 31170635 |id == 30322394 |id == 31170901 | id == 31174356 |id == 31186507| id == 13780432| id == 31170881 | id == 31207539 | id == 25998857 | id == 31203602 | id == 22228258 | id == 15714850 | id == 31198682| id == 31208247 | id == 31207326, 1 , htn),
+         htn = ifelse(id == 30044333, 0, htn),
+         icu = ifelse(id == 30487616, 1, icu),
+         covideverp = ifelse(id == 30084983 | id == "07810302" | id == 31125377 | id == 11692126| id == 22880660, 0, covideverp),
+         covideverp = ifelse(id == 20173894 | id == 31100385| id == 13970231, 1, covideverp),
+         medstatin = ifelse(id == 30245166 | id == 31157848 | id == 30355530 | id == 30487616 | id == 31053533 | id == 30898115
+                            | id == 31163060 | id == 08063026 | id == 23166994 | id == 31173542| id == 23166994| id == 31170901 | id == 26225292 | id == 31207326, 1, medstatin),
+         medstatin = ifelse(id == 30044333, 0, medstatin),
+         death = ifelse(id == 30487616, 1, death),
+         cad = ifelse(id == 31202288 | id == 22228258, 1, cad),
+         cad = ifelse(id == 30743267, 0, cad),
+         chf = ifelse(id == 31202288 | id == 22228258, 1, chf),
+         af = ifelse(id == 30743267 | id == 31208247, 1, af),
+         cvd = ifelse(cad ==1 | cabg == 1| pci == 1| pad == 1|stroke == 1| tia == 1| chf == 1, 1, 0),
+         admitb = ifelse(id == 25354309, 0, admitb),
+         admita = ifelse(id == 25354309, 0, admita),
+         admita = ifelse(id == 13970231, 1, admita),
+         cancer = ifelse(id == 31203602, 1, cancer)
+
+  )%>%
+  mutate(acei_ever = ifelse(acei == 1 | aceiprior == 1 | aceipriorX == 1, 1, 0),
+         arb_ever = ifelse(arb == 1 | arbprior == 1 | arbpriorX == 1, 1, 0),
+         asa_ever = ifelse(asa == 1 | asaprior == 1 | asapriorX == 1, 1, 0),
+         ibuprof_ever = ifelse(ibuprof == 1 | ibuprofprior == 1 | 
+                                 ibuprofpriorX == 1, 1, 0),
+         nsaid_ever = ifelse(nsaid == 1 | nsaidprior == 1 | nsaidpriorX == 1, 1, 0),
+         ace_arb_ever = ifelse(acei_ever == 1 | arb_ever == 1, 1, 0),
+         # severe_outcome = ifelse(edb == 1 | doedb == 1 | eda == 1 | icu == 1 |
+         #                           ventb == 1 | venta == 1 | intubatedb == 1 |
+         #                           intubateda == 1 | ecmob == 1 | ecmoa == 1 |
+         #                           crrtb == 1 | crrta == 1 | death == 1 |
+         #                           dispo == "Expired" | !is.na(cod) | status == "Deceased", 1, 0),
+         # severe_outcome = ifelse(is.na(severe_outcome),0, severe_outcome),
+         severe_outcome = ifelse(icu == 1 | ventb == 1 | venta == 1 | intubatedb == 1 |
+                                   intubateda == 1 | death == 1 |
+                                   dispo == "Expired" | !is.na(cod) | status == "Deceased", 1, 0),
+         severe_outcome = ifelse(is.na(severe_outcome),0, severe_outcome),
+         death = ifelse(death == 1 | dispo == "Expired" | !is.na(cod) | status == "Deceased", 1, 0),
+         icu = ifelse(icu == 1 , 1, 0),
+         icu_intu = ifelse(icu == 1 & ( intubatedb == 1 |
+                                   intubateda == 1),1,0),
+         recovered = ifelse(dispo != "Expired" & !is.na(dispo) & severe_outcome == 0 & dispo != "In House", 1, 0),
+         unresolved = ifelse( (dispo == "In House" | is.na(dispo)) & severe_outcome == 0 , 1, 0), # NA in disp is included in unresolved
+         combined_outcome = case_when(severe_outcome == 1 ~ "severe outcome",
+                                      recovered == 1 ~ "recovered",
+                                      unresolved == 1 ~ "unresolved"),
+         admission = ifelse(admitb == 1 | admita == 1, 1, 0),
+         asthma = asthma, #ifelse(Asthma_PT == "Y",1,0), 
+         copd = copd, #ifelse(COPD_PT == "Y",1,0),
+         copd = ifelse(id == 31198682, 1, copd),
+         ckd = ckd,#ifelse(CKD_PT == "Y",1,0),
+         diabetes = dm,#ifelse(Diabetes_PT == "Y",1,0),
+         hypert = htn,#ifelse(Hypertension_PT == "Y",1,0),
+         tobacco = tob,#ifelse(Tobacco_PT == "Y",1,0),
+         tobacco_freq = case_when(grepl("never", tobfreq, ignore.case = T)| 
+                                    grepl("unknown", tobfreq, ignore.case = T) | is.na(tobfreq)~ "never smoked",
+                                  grepl("former", tobfreq, ignore.case = T) ~ "former smoker",
+                                  TRUE ~ "current smoker") ,
+         current_smoker = ifelse(tobacco_freq =='current smoker','yes', 'no'),
+         hiv = hiv,#ifelse(HIV_PT == "Y",1,0),
+         obesity = case_when(bmi >= 30 | Obesity_PT == "Y" ~ 1,
+                             bmi < 30 | Obesity_PT == "N" ~ 0),
+         cirrliv = cirrhosis,#ifelse(CirrLiv_PT == "Y",1,0),
+         ischvasc = ifelse(IschVasc_PT == "Y",1,0),
+         stroke = stroke,#ifelse(Stroke_PT == "Y",1,0),
+         cf = ifelse(CF_PT == "Y",1,0),
+         hfailure = ifelse(HFailure_PT == "Y",1,0),
+         Coviddatefirst = as.Date(as.POSIXct(coviddatefirst)),
+         #cvd = ifelse(CVD_PT == "Y",1,0)
+         ) %>% 
+  mutate(sex = case_when(sex == 1 ~ "F", sex == 2 ~ "M"),
+         rac = case_when( rac == 1 ~ "Asian", rac == 2 ~ "Black",
+                          rac == 3 ~ "Caucasian", rac == 4 ~ "Hispanic", 
+                          rac == 6 | rac == 7 | rac == 8 |
+                            rac == 0 ~ "Other"),
+         rac = ifelse(ethnicity == "Hispanic" & !is.na(ethnicity), "Hispanic", rac),
+         acei_ever = ifelse( id == 31174356 | id == 23092315 | id ==20173894 | id == 24572091 |id == 04066429 |id == 31186507| id == 31189404 | id == 31207326, 1, acei_ever),
+         ace_arb_ever = ifelse( id == 31174356 | id == 23092315 | id == 20173894 | id == 24572091 | id == 31011253 |id == 04066429 | id == 30512568 | id == 31186507 | id == 31189404 | id == 31207326, 1, ace_arb_ever),
+         ace_arb_ever = ifelse( id == 10214252, 0, ace_arb_ever),
+         arb_ever = ifelse( id == 31011253 | id == 30512568, 1, arb_ever),
+         arb_ever = ifelse( id == 10214252, 0, arb_ever),
+         diabetes = ifelse(id == 20173894 |id == 31207920, 1, diabetes),
+         hypert = ifelse(id == 20173894, 1, hypert),
+         cvd = ifelse (id == 31147322 |id == 31163060 | id == 30512568, 1, cvd)
+         ) %>% 
+  select(id, Coviddatefirst, los, doaa, doab, dispo, covideverp, admita, admitb, admission, severe_outcome, sex, rac, hcwo, bmi, covidage,  
+         acei_ever, arb_ever, asa_ever, ibuprof_ever, nsaid_ever, ace_arb_ever, 
+         asthma, copd, ckd, diabetes, hypert, hiv, obesity, cirrliv,
+         ischvasc, stroke, cf, hfailure, cvd, cancer, tobacco, tobacco_freq, combined_outcome, medstatin, cad, cabg, pci, pad, stroke,
+         tia, chf, af, abltn, current_smoker, PANEL_PT, death,icu_intu
+  ) %>% 
+  #mutate(bmi = ifelse(is.na(bmi),mean(bmi, na.rm = T), bmi))  %>% #imputation of BMI NA cases
+  mutate(
+    covidage_decade = case_when(covidage > 0 & covidage <=10 ~ 5,
+                                covidage > 10 & covidage <=20 ~ 15,
+                                covidage > 20 & covidage <=30 ~ 25,
+                                covidage > 30 & covidage <=40 ~ 35,
+                                covidage > 40 & covidage <=50 ~ 45,
+                                covidage > 50 & covidage <=60 ~ 55,
+                                covidage > 60 & covidage <=70 ~ 65,
+                                covidage > 70 & covidage <=80 ~ 75,
+                                covidage > 80 & covidage <=90 ~ 85,
+                                covidage > 90 & covidage <=100 ~ 95,
+                                covidage > 100 & covidage <=150 ~ 105),
+    covidage = ifelse(covidage > 100, 100, covidage),
+    age_per_10_yrs = covidage/10,
+    bmi = cut(bmi, breaks = c(5, 30, max(bmi))),#Making categorical variables out of age and bmi
+    #covidage = as.character(covidage),
+    #bmi = as.character(bmi),
+    medication_ever = ifelse(acei_ever==1 | arb_ever==1 | 
+                               asa_ever==1 |ibuprof_ever==1 |nsaid_ever==1,1,0),
+    asthma_copd = ifelse(asthma == 1 | copd == 1, 1, 0),
+    ckd_diabetes = ifelse(ckd == 1 | diabetes == 1, 1, 0),
+    hf_isch_stroke_cvd = ifelse(hfailure == 1 | ischvasc == 1
+                                | stroke == 1 | cvd == 1, 1, 0),
+    any_comorbidity = ifelse(asthma_copd == 1 | ckd_diabetes == 1 |
+                               hf_isch_stroke_cvd ==1 | hypert ==1|
+                               cirrliv == 1 | cancer == 1, 1, 0),
+    lod_unresolved =  as.Date("2020-06-17") - Coviddatefirst
+  ) %>% 
+  filter(!is.na(covidage), id != 30487616, id != 31154445)#, id != '31207738', id !='05459946', id !='30421575',id !='31063623') # filter out patients with unknown age and covid negative
+                                            # exclude 1 patient (30487616) as this was not really a UCSD pt- was seen at UC Irvine
+                                            # exclude 1 patient(31154445) as Lori' email said he is a transfer without med info.
+```                                         
+
+
+# For 05-22 data set, correct data from Lori: 20 subjects were excluded due to transfer or comorbidity.
+# 19 from below dat_Lori, plus 31154445
+# For 06-17 data set, 52 were excluded.
+```{r warning=F}
+dat_Lori = readxl::read_xlsx(paste(downloadfilepath,'Admissions COVID 2020-0618 data fixes no pass.xlsx',sep=''), 
+                        skip = 0, na = "NULL") 
+#dat_Lori = dat_Lori[-1,]
+# some subjectids missing a 0 in front of them. add that 0
+id_miss_0 = subset(dat_Lori, !dat_Lori$id %in% dat$id)
+id_miss_0$id1 = paste('0', id_miss_0$id, sep = '')
+dat_Lori = merge(dat_Lori, id_miss_0, all.x = T)
+dat_Lori$id2 = ifelse(dat_Lori$id %in% id_miss_0$id, dat_Lori$id1, dat_Lori$id)
+dat_Lori = dat_Lori[,c("id2", "Include" ,"DODx")]
+names(dat_Lori)[names(dat_Lori) == "id2"] = 'id'
+
+
+# exclude Include = 0, 19 were excluded for 05-22
+# per Lori's email, change the diagnosis dates for 2 other subjects, include one more subject 31186507
+
+dat_Lori =  dat_Lori %>% 
+  mutate (Include = ifelse(id == 31186507, 1, Include))
+table(dat_Lori$Include)
+dat_Lori$DODx = as.Date(ifelse (dat_Lori$id == "08645327",as.Date("2020-05-07"), 
+                         ifelse (dat_Lori$id == "21796768",as.Date("2020-04-27"), as.Date(as.POSIXct(dat_Lori$DODx)))), origin="1970-01-01")
+ 
+
+dat = dat %>% filter (!id %in% dat_Lori[dat_Lori$Include ==0,]$id)
+
+
+# modify the diagnosis date for some transfer patients
+# 05-22 data set, Lori provided updated diagnosis dates for 17 subjects
+dat_Lori_date = dat_Lori %>% filter (!is.na(DODx)) %>%
+  mutate (DODx = as.Date(as.POSIXct(DODx)))
+
+dat= merge(dat, dat_Lori_date[,-2], all.x =T)
+dat$Coviddatefirst1 = as.Date(ifelse(!is.na(dat$DODx), dat$DODx, dat$Coviddatefirst),origin="1970-01-01")
+dat = dat[, -which(names(dat) %in% c("Coviddatefirst","DODx"))]
+
+names(dat)[names(dat) == "Coviddatefirst1"] = "Coviddatefirst"
+
+```
+
+
+
+\pagebreak
+
+# 1. Data description
+
+## Table 1. Admitted patients description
+```{r, results='asis', echo=F}
+options(qwraps2_markup = "markdown")
+
+
+our_summary1 <-
+  list("Sex" =
+         list("Male" = ~ qwraps2::n_perc0(.data$sex == "M", show_symbol = T, na_rm = T),
+              "Female"  = ~ qwraps2::n_perc0(.data$sex == "F", show_symbol = T, na_rm = T )),       
+       "Race" =
+         list("Black" = ~ qwraps2::n_perc0(.data$rac == "Black",show_symbol = T),
+              "Caucasian"  = ~ qwraps2::n_perc0(.data$rac == "Caucasian",show_symbol = T),
+              "Asian"  = ~ qwraps2::n_perc0(.data$rac == "Asian",show_symbol = T),
+              "Hispanic"  = ~ qwraps2::n_perc0(.data$rac == "Hispanic",show_symbol = T),
+              "Other"= ~ qwraps2::n_perc0(.data$rac == "Other",show_symbol = T)
+         ),
+       "Age at test" =
+         list("mean (sd)" = ~ qwraps2::mean_sd(.data$covidage)),
+       "Obesity" =
+         list("Yes"  = ~ qwraps2::n_perc0(
+           .data$obesity == 1 ,show_symbol = T),
+           "No"= ~ qwraps2::n_perc0(
+             .data$obesity == 0,show_symbol = T)),
+       "Asthma" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$asthma == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$asthma  == 0,show_symbol = T)),
+       "COPD" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$copd == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$copd  == 0,show_symbol = T)),
+       "CKD" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$ckd == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$ckd  == 0,show_symbol = T)),
+       "Diabetes" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$diabetes == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$diabetes  == 0,show_symbol = T)),
+       "Hypertension" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$hypert == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$hypert  == 0,show_symbol = T)),
+       "HIV" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$hiv == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$hiv  == 0,show_symbol = T)),
+       # "Cirr Liv" =
+       #   list("Yes" = ~ qwraps2::n_perc0(.data$cirrliv == 1,show_symbol = T),
+       #        "No"  = ~ qwraps2::n_perc0(.data$cirrliv  == 0,show_symbol = T)),
+       # "Isch Vasc" =
+       #   list("Yes" = ~ qwraps2::n_perc0(.data$ischvasc == 1,show_symbol = T),
+       #        "No"  = ~ qwraps2::n_perc0(.data$ischvasc  == 0,show_symbol = T)),
+       "Stroke" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$stroke == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$stroke  == 0,show_symbol = T)),
+       "CF" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$cf == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$cf  == 0,show_symbol = T)),
+       "hfailure" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$hfailure == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$hfailure  == 0,show_symbol = T)),
+       "CVD" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$cvd == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$cvd  == 0,show_symbol = T)),
+       "Cancer" = 
+         list("Yes" = ~ qwraps2::n_perc0(.data$cancer == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$cancer  == 0,show_symbol = T)),
+       "ACEi or ARB ever" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$ace_arb_ever == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$ace_arb_ever == 0,show_symbol = T)),
+       "Statin med" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$medstatin == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$medstatin == 0,show_symbol = T)),
+       # "ACE inhibitor" =
+       #   list("ACE inhibitor Yes" = ~ qwraps2::n_perc0(.data$acei_ever == 1,show_symbol = T),
+       #        "No"  = ~ qwraps2::n_perc0(.data$acei_ever == 0,show_symbol = T)),
+       # "ARB" =
+       #   list("ARBYes" = ~ qwraps2::n_perc0(.data$arb_ever == 1,show_symbol = T),
+              # "No"  = ~ qwraps2::n_perc0(.data$arb_ever == 0,show_symbol = T)),
+       "Aspirin ever" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$asa_ever == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$asa_ever == 0,show_symbol = T)), 
+       "NSAID ever" =
+         list("Yes" = ~ qwraps2::n_perc0(.data$nsaid_ever == 1,show_symbol = T),
+              "No"  = ~ qwraps2::n_perc0(.data$nsaid_ever == 0,show_symbol = T)),  
+       "Smoking status" =
+         list("Current smoker" = ~ qwraps2::n_perc0(.data$tobacco_freq == "current smoker",show_symbol = T),
+              "Former smoker"  = ~ qwraps2::n_perc0(.data$tobacco_freq  == "former smoker",show_symbol = T),
+              "Never smoked"  = ~ qwraps2::n_perc0(.data$tobacco_freq  == "never smoked",show_symbol = T)),
+       "Resolved or not" = 
+         list("Severe outcome" = ~ qwraps2::n_perc0(.data$combined_outcome == "severe outcome",show_symbol = T),
+              "Recovered" = ~ qwraps2::n_perc0(.data$combined_outcome == "recovered",show_symbol = T),
+              "Unresolved" = ~ qwraps2::n_perc0(.data$combined_outcome == "unresolved",show_symbol = T))
+       
+  )
+
+
+#--- define recovered using cutoff of 30 days from date of diagnosis to data download date
+#--- some unresolved subjects were actually recovered
+
+dat = dat %>% 
+  mutate(combined_outcome = ifelse(lod_unresolved > 30 & combined_outcome =="unresolved", "recovered", combined_outcome))
+#table(dat_admit$combined_outcome)
+
+
+# to calculate 95%CI for difference between two proportions among variables with more than 2 categories, generate several new variables to collapes variables
+dat = dat %>% 
+  mutate(rac_Asian = ifelse(rac == "Asian", 1, 0),
+         rac_Black = ifelse(rac == "Black", 1,0),
+         rac_Caucasian = ifelse(rac == "Caucasian", 1,0),
+         rac_Hispanic = ifelse(rac == 'Hispanic', 1, 0),
+         rac_other = ifelse(rac =='Other', 1, 0),
+         current_smoker = ifelse(tobacco_freq == 'current smoker', 1,0),
+         former_smoker = ifelse(tobacco_freq == 'former smoker', 1,0),
+         never_smoke = ifelse(tobacco_freq == 'never smoked', 1,0),
+         recovered = ifelse(combined_outcome == 'recovered', 1,0),
+         severe = ifelse(combined_outcome == 'severe outcome',1, 0),
+         unresolved = ifelse(combined_outcome == 'unresolved', 1, 0)
+         )
+
+
+
+# admitted
+dat_admit = dat %>% filter(admission ==1 )
+#dim(dat_admit)
+#table(dat_admit$combined_outcome)
+
+
+
+
+
+# Positive and addmitted
+Negative_admit = dat %>% filter(covideverp == 0 & admission ==1 )
+summaryTable_negative_admitted = summary_table(Negative_admit, our_summary1)
+
+# Negative admitted
+Positive_admit = dat %>% filter(covideverp == 1 & admission ==1)
+summaryTable_positive_admitted = summary_table(Positive_admit,our_summary1)
+
+
+cbind(summaryTable_negative_admitted,summaryTable_positive_admitted, " Difference (95% CI)" = "")
+#pvalues1 = c(frmtp(fisher.test(table(dat$sex, dat$covideverp))$p.value),
+#            frmtp(fisher.test(table(dat$rac, dat$covideverp))$p.value))
+
+# p-values for continous predictors
+# pvalues2 = 
+#   list(lm(covidage ~ covideverp,  data = dat),
+#        lm(bmi ~ covideverp, data = dat)) %>%
+#   lapply(aov) %>%
+#   lapply(summary) %>%
+#   lapply(function(x) x[[1]][["Pr(>F)"]][1]) %>%
+#   lapply(frmtp) %>%
+#   do.call(c, .)
+# 
+# 
+# pvalues3 = c(frmtp(fisher.test(table(dat$hcwo, dat$covideverp))$p.value),
+#              frmtp(fisher.test(table(dat$acei_ever, dat$covideverp))$p.value),
+#              frmtp(fisher.test(table(dat$arb_ever, dat$covideverp))$p.value),
+#              frmtp(fisher.test(table(dat$asa_ever, dat$covideverp))$p.value),
+#              frmtp(fisher.test(table(dat$ibuprof_ever, dat$covideverp))$p.value),
+#              frmtp(fisher.test(table(dat$nsaid_ever, dat$covideverp))$p.value),
+#              frmtp(fisher.test(table(dat$ace_arb_ever, dat$covideverp))$p.value),
+#              frmtp(fisher.test(table(dat$ibuprof_nsaid_ever, dat$covideverp))$p.value)
+# )
+
+
+# summaryTable <- cbind(summaryTable, "P-value" = "")
+# 
+# 
+# summaryTable[grepl("sd", rownames(summaryTable)), "P-value"] <- pvalues2
+# summaryTable[grepl("No", rownames(summaryTable)), "P-value"] <- pvalues3
+# summaryTable[grepl("Female", rownames(summaryTable)), "P-value"] <- pvalues1[1]
+# summaryTable[grepl("Other", rownames(summaryTable)), "P-value"] <- pvalues1[2]
+
+```
+
+\pagebreak
+
+```{r, results='asis', echo=F}
+options(qwraps2_markup = "markdown")
+# Positive and addmitted
+Positive_mild = dat %>% filter(covideverp == 1 & admission ==1 & severe_outcome == 0)
+summaryTable_positive_admitted_mild = summary_table(Positive_mild,our_summary1)
+
+# Positive and severe outcome admitted
+Positive_severe = dat %>% filter(covideverp == 1 & severe_outcome == 1 & admission ==1)
+summaryTable_positive_severe = summary_table(Positive_severe,our_summary1)
+
+
+#cbind(summaryTable_positive_admitted_mild,summaryTable_positive_severe, " Difference (95% CI)" = "")
+```
+
+\pagebreak
+
+## Table 2. Negative/Positive admitted patients mild or severe
+```{r, results='asis', echo=F}
+options(qwraps2_markup = "markdown")
+# Negative Admitted patients from taking the test
+Neg_mild = dat %>% filter(admission == 1 & covideverp == 0 & severe_outcome == 0)
+summaryTable_negative_admitted_mild = summary_table(Neg_mild,our_summary1)
+
+
+
+# Negative and severe outcome admitted
+Neg_severe = dat %>% filter(covideverp == 0 & severe_outcome == 1 & admission ==1)
+summaryTable_negative_severe = summary_table(Neg_severe,our_summary1)
+
+
+
+
+# add 95% CI for differences
+
+
+myconf = function(data) {a= c(list(round(fisher.test(table(data$severe_outcome, data$sex))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$rac_Black))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$rac_Caucasian))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$rac_Asian))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$rac_Hispanic))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$rac_other))$conf.int,2)),
+                         list(round(t.test(data$covidage ~ as.factor(data$severe_outcome))$conf.int,2)),
+                         list(round(fisher.test(table(data$severe_outcome, data$obesity))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$asthma))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$copd))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$ckd))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$diabetes))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$hypert))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$hiv))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$stroke))$conf.int,2),NA),
+                         list(NA,NA), # 0 CF
+                         list(round(fisher.test(table(data$severe_outcome, data$hfailure))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$cvd))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$cancer))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$ace_arb_ever))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$medstatin))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$asa_ever))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$nsaid_ever))$conf.int,2),NA),
+                         list(round(fisher.test(table(data$severe_outcome, data$current_smoker))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$former_smoker))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$never_smoke))$conf.int,2)),
+                         list(round(fisher.test(table(data$severe_outcome, data$severe))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$recovered))$conf.int,2),
+                              round(fisher.test(table(data$severe_outcome, data$unresolved))$conf.int,2))
+                         )
+a1=data.frame(t(sapply(a, function(x){x[1:2]}))) #extract first and second elements from each sublist, which the value of CI
+a1$conf=ifelse(!is.na(a1$X1), paste(a1$X1,a1$X2, sep=','), '') #combine the two elements into one variable
+a1=a1[ ,3]
+a1
+}
+
+
+test= cbind(summaryTable_negative_admitted_mild, summaryTable_negative_severe, " Diff (95% CI)" = myconf(Negative_admit),
+      summaryTable_positive_admitted_mild, summaryTable_positive_severe," Diff (95% CI)" = myconf(Positive_admit))
+
+test
+```
+
+## Breakdown for the severe patients
+```{r}
+num_death = sum(Positive_admit$death, na.rm = T)
+num_icu = sum(Positive_admit$icu, na.rm = T)
+num_icu_intu = sum(Positive_admit$icu_intu, na.rm = T)
+knitr::kable(data.frame(category = c("death", "icu", "icu and intu"), 
+                        num = c(num_death, num_icu,num_icu_intu)))
+```
+
+### Relevel the COVID+ positive patients as the reference(covid+ =0, covid- =1)
+```{r}
+dat_adm = dat %>% mutate(covidnegative = case_when(covideverp == 1 ~ 0,
+                                            covideverp == 0 ~1)) %>% 
+  filter(admission == 1)
+
+dat_adm_p = dat_adm %>% filter(covideverp == 1)
+dat_adm_n = dat_adm %>% filter(covideverp == 0)
+#sensitivity analysis: only include PANEL_PT =Y for covid negative population
+dat_adm_n_s = dat_adm %>% filter(covideverp == 0, PANEL_PT =='Y')
+
+table(dat_adm$PANEL_PT, dat_adm$covideverp)
+   
+   
+```
+
+
+
+## 1.1 Test the population difference between COVID negative admitted and COVID positive admitted
+Age
+```{r}
+summary(glm(covidnegative ~ covidage_decade, family = binomial, data = dat_adm))
+```
+
+
+
+## 3.1 Risk factor model for Statins, ACEi, ARB and clinical variables for positive only population
+
+```{r, echo = T}
+datfit = dat_adm %>%  
+  select(medstatin, arb_ever, acei_ever, sex,covidage, age_per_10_yrs, ckd, hypert, cvd, diabetes, obesity, severe_outcome, covideverp)
+  
+```
+
+
+```{r, echo = T}
+model = "severe_outcome ~ medstatin*covideverp + arb_ever + acei_ever + sex + covidage + ckd + hypert + cvd + diabetes +obesity"
+fit = glm(as.formula(model), family = binomial, data = datfit)
+#summary(fit)
+## odds ratios and 95% CI
+#exp(cbind(OR = coef(fit), confint(fit)))
+
+## result
+myresult = round(cbind(coeff = coef(fit),exp(cbind(OR = coef(fit), confint(fit))), p = coef(summary(fit))[,'Pr(>|z|)']),2)
+df.myresult = data.frame(myresult)
+names(df.myresult) = c ( "coeff", "OR", "2.5", "97.5", "p"  )
+knitr::kable(df.myresult)
+```
+
+```{r, echo = T}
+df_model = as.data.frame(model.frame(fit))
+
+table(df_model$covideverp,df_model$severe_outcome)
+```
+
+## Generate confidence sets for age
+```{r}
+# PARAMETERS
+levels = c(0.4,0.5,0.6)
+n_boot = 2000
+alpha = 0.05
+save = T
+# predict grid
+covidage = seq(20,100, by = 0.1)
+grid_df = data.frame( expand.grid(covidage = covidage, 
+                                   medstatin =  c(0,1), acei_ever = 0,
+                        arb_ever = 0, sex = "M", ckd = 1, hypert = 1, cvd = 1, 
+                        diabetes = 1, obesity = 1, covideverp = c(0,1)) )
+# SCB 
+SCB = SCB_logistic_outcome(df_fit = datfit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha)
+```
+
+
+```{r}
+# Confidence sets plotting
+
+## COVID positive no statin
+p_data = SCB %>% 
+  filter(medstatin == 0 & covideverp == 1) 
+p = p_data %>% 
+  ggplot(aes(x = covidage, y = Mean))+ geom_line(color = "black")+ 
+  geom_ribbon(aes(ymin = LowerBound, ymax = UpperBound),alpha = 0.3) +
+  geom_hline(yintercept = levels, linetype="dashed")+
+  geom_text(data = data.frame(x = rep(min(covidage), length(levels)), y = levels, labels = levels), aes(x = x, y = y, label = labels, vjust = -0.5))
+for(l in levels){
+  df_plot_l = p_data %>% 
+    mutate(l_in = ifelse(LowerBound >= l, l, NA), 
+                                 l_est = ifelse(Mean >= l, l, NA),
+                                 l_out = ifelse(UpperBound >= l , l, NA))
+  if(!all(is.na(df_plot_l$l_out))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_out),color = "blue",lwd = 1.5) 
+  }
+  if(!all(is.na(df_plot_l$l_est))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_est),color = "green",lwd = 1.5)
+  }
+  if(!all(is.na(df_plot_l$l_in))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_in),color = "red",lwd = 1.5)
+  }
+}
+p = p + ggtitle("COVID +, statin -") + theme_light() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5,), plot.margin = unit(c(1,0.2,0.2,0.2), "mm"))+
+  labs(x = "Age", y = "Prob of severe outcome") 
+
+plot_statin0covid1= p
+
+## COVID positive statin
+p_data = SCB %>% 
+  filter(medstatin == 1 & covideverp == 1) 
+p = p_data %>% 
+  ggplot(aes(x = covidage, y = Mean))+ geom_line(color = "black")+ 
+  geom_ribbon(aes(ymin = LowerBound, ymax = UpperBound),alpha = 0.3) +
+  geom_hline(yintercept = levels, linetype="dashed")+
+  geom_text(data = data.frame(x = rep(min(covidage), length(levels)), y = levels, labels = levels), aes(x = x, y = y, label = labels, vjust = -0.5))
+for(l in levels){
+  df_plot_l = p_data %>% 
+    mutate(l_in = ifelse(LowerBound >= l, l, NA), 
+                                 l_est = ifelse(Mean >= l, l, NA),
+                                 l_out = ifelse(UpperBound >= l , l, NA))
+  if(!all(is.na(df_plot_l$l_out))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_out),color = "blue",lwd = 1.5) 
+  }
+  if(!all(is.na(df_plot_l$l_est))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_est),color = "green",lwd = 1.5)
+  }
+  if(!all(is.na(df_plot_l$l_in))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_in),color = "red",lwd = 1.5)
+  }
+}
+p = p + ggtitle("COVID +, statin +") + theme_light() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5,), plot.margin = unit(c(1,0.2,0.2,0.2), "mm"))+
+  labs(x = "Age", y = "Prob of severe outcome") 
+
+plot_statin1covid1= p
+
+## COVID negative no statin
+p_data = SCB %>% 
+  filter(medstatin == 0 & covideverp == 0) 
+p = p_data %>% 
+  ggplot(aes(x = covidage, y = Mean))+ geom_line(color = "black")+ 
+  geom_ribbon(aes(ymin = LowerBound, ymax = UpperBound),alpha = 0.3) +
+  geom_hline(yintercept = levels, linetype="dashed")+
+  geom_text(data = data.frame(x = rep(min(covidage), length(levels)), y = levels, labels = levels), aes(x = x, y = y, label = labels, vjust = -0.5))
+for(l in levels){
+  df_plot_l = p_data %>% 
+    mutate(l_in = ifelse(LowerBound >= l, l, NA), 
+                                 l_est = ifelse(Mean >= l, l, NA),
+                                 l_out = ifelse(UpperBound >= l , l, NA))
+  if(!all(is.na(df_plot_l$l_out))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_out),color = "blue",lwd = 1.5) 
+  }
+  if(!all(is.na(df_plot_l$l_est))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_est),color = "green",lwd = 1.5)
+  }
+  if(!all(is.na(df_plot_l$l_in))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_in),color = "red",lwd = 1.5)
+  }
+}
+p = p + ggtitle("COVID -, statin -") + theme_light() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5,), plot.margin = unit(c(1,0.2,0.2,0.2), "mm"))+
+  labs(x = "Age", y = "Prob of severe outcome") 
+
+plot_statin0covid0= p
+
+## COVID negative statin
+p_data = SCB %>% 
+  filter(medstatin == 1 & covideverp == 0) 
+p = p_data %>% 
+  ggplot(aes(x = covidage, y = Mean))+ geom_line(color = "black")+ 
+  geom_ribbon(aes(ymin = LowerBound, ymax = UpperBound),alpha = 0.3) +
+  geom_hline(yintercept = levels, linetype="dashed")+
+  geom_text(data = data.frame(x = rep(min(covidage), length(levels)), y = levels, labels = levels), aes(x = x, y = y, label = labels, vjust = -0.5))
+for(l in levels){
+  df_plot_l = p_data %>% 
+    mutate(l_in = ifelse(LowerBound >= l, l, NA), 
+                                 l_est = ifelse(Mean >= l, l, NA),
+                                 l_out = ifelse(UpperBound >= l , l, NA))
+  if(!all(is.na(df_plot_l$l_out))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_out),color = "blue",lwd = 1.5) 
+  }
+  if(!all(is.na(df_plot_l$l_est))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_est),color = "green",lwd = 1.5)
+  }
+  if(!all(is.na(df_plot_l$l_in))){
+    p = p + geom_line(data = df_plot_l,aes(x = covidage, y = l_in),color = "red",lwd = 1.5)
+  }
+}
+p = p + ggtitle("COVID -, statin +") + theme_light() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5,), plot.margin = unit(c(1,0.2,0.2,0.2), "mm"))+
+  labs(x = "Age", y = "Prob of severe outcome") 
+
+plot_statin1covid0= p
+
+plot_statin0covid0 = plot_statin0covid0 +  theme(axis.text.x = element_blank(),
+                                        axis.ticks.x = element_blank(),
+                                        axis.title.x = element_blank() )
+plot_statin0covid1 = plot_statin0covid1 +  theme(axis.text.y = element_blank(),
+                                        axis.ticks.y = element_blank(),
+                                        axis.title.y = element_blank() ,
+                                        axis.text.x = element_blank(),
+                                        axis.ticks.x = element_blank(),
+                                        axis.title.x = element_blank()) 
+plot_statin1covid1 = plot_statin1covid1 + theme(axis.text.y = element_blank(),
+                                        axis.ticks.y = element_blank(),
+                                        axis.title.y = element_blank() )
+
+((plot_statin0covid0  + plot_statin0covid1)/
+(plot_statin1covid0 + plot_statin1covid1) )& ylim(c(0.1,0.9))
+
+if(save){
+ ggsave("./confidence_set_covid.png", width = unit(10, "cm"), height = unit(7, "cm")) 
+}
+
+```
+
+
+
+
+
