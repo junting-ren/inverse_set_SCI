@@ -548,7 +548,11 @@ grid_df = data.frame( expand.grid(covidage = covidage,
                         arb_ever = 0, sex = "M", ckd = 1, hypert = 1, cvd = 1, 
                         diabetes = 1, obesity = 1, covideverp = c(0,1)) )
 # SCB 
+start_time <- Sys.time()
 SCB = SCB_logistic_outcome(df_fit = datfit, model = model, grid_df = grid_df, n_boot = n_boot, alpha = alpha)
+end_time <- Sys.time()
+time_taken <- end_time - start_time
+print(time_taken)
 ```
 
 
