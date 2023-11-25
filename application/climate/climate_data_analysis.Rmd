@@ -63,8 +63,11 @@ for(j in 1:nb) Y[,,na+j] = summer[,,j,2]
 #for(j in 1:nb) Y[,,na+j] = winter[,,j,2]
 Z = list(x = lon, y = lat, z = Y)
 correlation = "corAR1"
+start_time <- Sys.time()
 temp = SCB_gls_climate(Z = Z, level = 2, X = X, w = c(1,0,0,0), correlation = correlation, mask = mask, alpha = alpha_CoPE)
-# Crop in the image
+end_time <- Sys.time()
+time_taken <- end_time - start_time
+print(time_taken)
 ```
 
 ```{r}
