@@ -25,7 +25,7 @@ date = "y2021_m01_d06"
 # Dense functional data
 ## Demonstration of confidence sets in 1D
 ```{r}
-save = T # whether to save the plots
+save = F # whether to save the plots
 load( paste( "dense_functional_sim.RData" ) )
 N = NVec[2]
 x = seq( 0, 1, length.out = 1000 )
@@ -88,11 +88,11 @@ df_result_sim = result_frame_1d %>%
   pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
   mutate(coverage_rate = coverage_rate*100,
          N = as_factor(N),
-         Simulation = fct_relevel(Simulation, levels = c("Upper5","Upper10",  
+         Simulation = fct_relevel(Simulation, "Upper5","Upper10",  
                                                          "Upper25", "Upper100",
                                                          "Upper1000","SCI", 
                                                          "cope25","cope10","cope5"
-                                                          )))
+                                                          ))
   
 mypal <- colorRampPalette(brewer.pal(6, "PuBu"))
 mypal2 <- colorRampPalette(rev(brewer.pal(6, "YlOrRd")))
@@ -152,17 +152,17 @@ result_sim_plotA = df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group =
 
 
 #2D
-load( paste( "dense_functional_sim.RData" ) )
+load( paste( "dense_functional_sim_2D_cope.RData" ) )
 df_result_sim = result_frame_2d %>%
   select(N, SCI = SCB, Upper1000, Upper100, Upper25, Upper10, Upper5, cope5, cope10, cope25)%>% 
   pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
   mutate(coverage_rate = coverage_rate*100,
          N = as_factor(N),
-         Simulation = fct_relevel(Simulation, levels = c("Upper5","Upper10",  
+         Simulation = fct_relevel(Simulation, "Upper5","Upper10",  
                                                          "Upper25", "Upper100",
                                                          "Upper1000","SCI", 
                                                          "cope25","cope10","cope5"
-                                                          )))
+                                                          ))
   
 mypal <- colorRampPalette(brewer.pal(6, "PuBu"))
 mypal2 <- colorRampPalette(rev(brewer.pal(6, "YlOrRd")))
