@@ -261,10 +261,6 @@ knitr::kable(result_frame_2d)
 
 
 # Regression outcome simulation
-```{r}
-load("regression_outcome_bootstrap.RData")
-```
-
 
 ## Demonstration of linear regression outcome with 2 covariates
 ```{r}
@@ -378,7 +374,7 @@ df_cor = data.frame(Logistic = abs(c(cor_pred_glm[cor_pred_glm!=0])[sample_indx]
 
 ## Simulation result for regression outcome
 ```{r}
-load("regression_outcome_bootstrap2.RData")
+load("regression_outcome_bootstrap.RData")
 level = 0.95
 #Linear
 result_df_linear_final = result_df_linear

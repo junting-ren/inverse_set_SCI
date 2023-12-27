@@ -1,5 +1,5 @@
 ---
-title: "Dense functional data"
+title: "Dense functional data Table 1 and Fig. 5"
 author: "Junting Ren"
 date: "10/4/2021"
 output: html_document
@@ -19,7 +19,7 @@ library(cope)
 library(abind)
 ```
 
-
+# This simulation replicates Table 1 and Fig. 5 in the paper
 
 # 1D dense functional data
 ```{r}

@@ -41,3 +41,32 @@ SCB_logistic_outcome = function(df_fit, model, grid_df, n_boot = 1000, alpha = 0
   sim_CB = data.frame(LowerBound = expit(y_hat$fit - thres*y_hat$se.fit), Mean = expit(y_hat$fit),
                       UpperBound = expit(y_hat$fit + thres*y_hat$se.fit), grid_df)
 }
+
+SCB_regression_coef = function(df_fit, model, n_boot = 5000, alpha = 0.05, type = "linear"){
+  # type: "linear" or "logistic"
+  formula_ = as.formula(model)
+  if(type == "linear"){
+    fit = lm(model, df_fit)
+  }else if(type == "logistic"){
+    fit = suppressWarnings(glm(model, family = binomial(), data = df_fit)) # Suppress warning for 0 or 1 probability for simulation
+  }
+  sum_out = summary(fit)
+  coef_hat = fit$coefficients # bootstrap true mean
+  coef_sd = sum_out$coefficients[,2]
+  res_max_v = rep(0,n_boot)
+  for(i in 1:n_boot){
+    df_boot = df_fit[sample(1:dim(df_fit)[1], replace = T),]
+    if(type == "linear"){
+      fit_boot = lm(model, df_boot)
+    }else if(type == "logistic"){
+      fit_boot = suppressWarnings(glm(model, family = binomial(), data = df_boot))
+    }
+    sum_out_boot = summary(fit_boot)
+    coef_hat_boot =fit_boot$coefficients
+    coef_sd_boot = sum_out_boot$coefficients[,2]
+    residual = abs(coef_hat_boot - coef_hat)/coef_sd_boot
+    res_max_v[i] = max(residual)
+  }
+  thres = quantile(res_max_v, probs = 1 - alpha)
+  sim_CB = data.frame(LowerBound = coef_hat - thres*coef_sd, Mean = coef_hat, UpperBound = coef_hat + thres*coef_sd)
+}
