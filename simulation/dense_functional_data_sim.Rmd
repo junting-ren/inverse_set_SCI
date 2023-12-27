@@ -235,11 +235,224 @@ result_frame_1d %>%
   geom_point(position = position_jitter(h=0.015,w=0.015))
 ```
 
-
 ```{r}
 save.image('dense_functional_sim_1D_cope.RData')
 ```
 
+# 1D dense functional data irregular sampling
+```{r}
+n_sim = 5000
+#NVec = c( 10 )
+NVec =c( 10, 20, 30, 50, 100, 150 )
+#x = seq( 0, 1, length.out = 200 )
+x = sort(runif(100))
+mu_ModelA = function( x ){ sin( 8 * pi * x ) * exp( -3 * x ) }
+noise_ModelA = BernsteinSumNoise
+sigma_ModelA = function(x){ ( ( 1 - x - 0.4 )^2 + 1 ) / 6 }
+dat_true = mu_ModelA(x)
+```
+
+
+## Checking Theorems and Corollarys
+Levels we are checking
+```{r}
+num_levels = 5000 #Number of levels for upper confidence set
+levels = seq(min(dat_true),max(dat_true),length.out = num_levels)
+levels_interval = expand.grid(low = seq(min(dat_true),max(dat_true),0.005),
+                              up = seq(min(dat_true),max(dat_true),0.005))
+levels_interval = levels_interval[levels_interval$low<levels_interval$up, ]
+# levels_sparse = seq(min(dat_true),max(dat_true),length.out =7 )
+# levels_sparse = levels_sparse[-c(1,length(levels_sparse))]# Get rid of the max and min
+```
+
+
+```{r}
+cl <- makeCluster(detectCores()-1)
+registerDoParallel(cl)
+cover_v_t1 = c()
+cover_v_c1 = c()
+cover_v_c2 = c()
+cover_v_c3 = c()
+cover_v_t1_5 = c()
+cover_v_t1_10 = c()
+cover_v_t1_25 = c()
+cover_v_t1_50 = c()
+cover_v_t1_100 = c()
+cover_v_t1_200 = c()
+cover_v_t1_500 = c()
+cover_v_t1_1000 = c()
+SCB_contain_v = c()
+cover_cope_v_bonf5 = c()
+cover_cope_v_bonf10 = c()
+cover_cope_v_bonf25 = c()
+cover_cope_v_bonf50 = c()
+cover_cope_v_single = c()
+for(n in NVec){
+  p_result = foreach(t=1:n_sim,.errorhandling = "pass", 
+                          .inorder = F,.verbose	=F) %dopar% {
+    M = FunctionalDataSample( N = n,
+                                      x = x,
+                                      mu =mu_ModelA,
+                                      noise = BernsteinSumNoise,
+                                      sigma = sigma_ModelA,
+                                      sd_ObsNoise = 0 )
+    SCB = SCB_dense(M)
+    t1_result = scb_to_cs(SCB$scb_up, SCB$scb_low, 
+                          levels = levels,
+                          true_mean = dat_true,
+                          type = "upper", return_contain_only = T)
+    c1_result = scb_to_cs(SCB$scb_up, SCB$scb_low, 
+                          levels = levels_interval,
+                          true_mean = dat_true, return_contain_only = T)
+    c2_result = scb_to_cs(SCB$scb_up, SCB$scb_low, 
+                          levels = levels,
+                          true_mean = dat_true,
+                          type= "lower", return_contain_only = T)
+    c3_result = scb_to_cs(SCB$scb_up, SCB$scb_low, 
+                          levels = levels,
+                          true_mean = dat_true,
+                          type = "two-sided", return_contain_only = T)
+    cover_scb = all(dat_true<=SCB$scb_up) & all(dat_true>=SCB$scb_low )
+    cover_t1 = t1_result$contain_all
+    cover_c1 = c1_result$contain_all
+    cover_c2 = c2_result$contain_all
+    cover_c3 = c3_result$contain_all
+    cover_t1_5 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 5)])
+    cover_t1_10 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 10)])
+    cover_t1_25 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 25)])
+    cover_t1_50 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 50)])
+    cover_t1_100 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 100)])
+    cover_t1_200 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 200)])
+    cover_t1_500 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 500)])
+    cover_t1_1000 = all(t1_result$contain_individual[
+      seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 1000)])
+    # Cope set
+    # M_test = M
+    # dim(M_test) = c(dim(M_test)[1], 1, dim(M_test)[-1])
+    # M_test = abind::abind(M_test,M_test, along = 2)
+    # M1 = M[1:100,]
+    # M2 = M[101:200,]
+    # dim(M1) = c(dim(M1)[1], 1, dim(M1)[-1])
+    # dim(M2) = c(dim(M2)[1], 1, dim(M2)[-1])
+    # M_test = abind::abind(M1,M2, along = 2)
+    M_new = M
+    dim(M_new) = c(dim(M_new)[1], 1, dim(M_new)[-1])
+    M_new = abind::abind(M_new,M_new, along = 2)
+    cope_v_5 = c()
+    dat_true_new = cbind(dat_true,dat_true)
+    for(i in levels[seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 5)]){
+     copelevel = cope::ComputeCope(Z = list(x = x, y = c(0,100), z = M_new), 
+                             level = i, mu = dat_true_new, 
+                             alpha = 0.05/5)# bonfernoi correction
+     cope_v_5 = c(cope_v_5, copelevel$incl_MB_true)
+    }
+    cope_v_10 = c()
+    for(i in levels[seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 10)]){
+     copelevel = cope::ComputeCope(Z = list(x = x,  y = c(0,100), z = M_new),
+                                   level = i, mu = dat_true_new,
+                                   alpha = 0.05/10)# bonfernoi correction
+     cope_v_10 = c(cope_v_10, copelevel$incl_MB_true)
+    }
+    cope_v_25 = c()
+    for(i in levels[seq.int(quantile(1:num_levels,0.05),quantile(1:num_levels,0.95), length.out = 25)]){
+     copelevel = cope::ComputeCope(Z = list(x = x, y = c(0,100), z = M_new), 
+                             level = i, mu = dat_true_new, 
+                             alpha = 0.05/25)# bonfernoi correction
+     cope_v_25 = c(cope_v_25, copelevel$incl_MB_true)
+    }
+    # cope_v_50 = c()
+    # for(i in 1:length(levels_sparse_50)){
+    #   copelevel = cope::ComputeCope(Z = list(x = x, y = x, z = M), 
+    #                                 level = levels_sparse_50[i], mu = dat_true, 
+    #                                 alpha = 0.05/length(levels_sparse_50))# bonfernoi correction
+    #   cope_v_50 = c(cope_v_50, copelevel$incl_MB_true)
+    # }
+    cover_cope_5 = all(cope_v_5)
+    cover_cope_10 = all(cope_v_10)
+    cover_cope_25 = all(cope_v_25)
+    # cover_cope_50 = all(cope_v_50)
+    # Max's cope set single level (median value of sparse set)
+    cover_cope_single = cope::ComputeCope(Z = list(x = x, y = c(0,100), z = M_new), 
+                             level = median(levels), mu = dat_true_new, 
+                             alpha = 0.05)$incl_MB_true
+    # Return the results
+    list(cover_scb = cover_scb, cover_t1= cover_t1, 
+      cover_c1= cover_c1, cover_c2 = cover_c2, 
+      cover_c3 = cover_c3, cover_t1_5 = cover_t1_5,
+      cover_t1_10 = cover_t1_10,
+      cover_t1_25 = cover_t1_25, cover_t1_50 =cover_t1_50,
+      cover_t1_100 =cover_t1_100, cover_t1_200= cover_t1_200,
+      cover_t1_500 =cover_t1_500, cover_t1_1000= cover_t1_1000,
+      cover_cope_5 = cover_cope_5,
+      cover_cope_10 = cover_cope_10,
+      cover_cope_25 = cover_cope_25,
+      # cover_cope_50 = cover_cope_50,
+      cover_cope_single = cover_cope_single
+      )
+                          }
+  SCB_contain_v = c(SCB_contain_v, mean(sapply(p_result, function(x) x$cover_scb)))
+  cover_v_t1 = c(cover_v_t1, mean(sapply(p_result, function(x) x$cover_t1)))
+  cover_v_c1 = c(cover_v_c1, mean(sapply(p_result, function(x) x$cover_c1)))
+  cover_v_c2 = c(cover_v_c2, mean(sapply(p_result, function(x) x$cover_c2)))
+  cover_v_c3 = c(cover_v_c3, mean(sapply(p_result, function(x) x$cover_c3)))
+  cover_v_t1_5 = c(cover_v_t1_5,mean(sapply(p_result, function(x) x$cover_t1_5)))
+  cover_v_t1_10 = c(cover_v_t1_10,mean(sapply(p_result, function(x) x$cover_t1_10)))
+  cover_v_t1_25 = c(cover_v_t1_25,mean(sapply(p_result, function(x) x$cover_t1_25)))
+  cover_v_t1_50 = c(cover_v_t1_50,mean(sapply(p_result, function(x) x$cover_t1_50)))
+  cover_v_t1_100 = c(cover_v_t1_100,mean(sapply(p_result, function(x) x$cover_t1_100)))
+  cover_v_t1_200 = c(cover_v_t1_200,mean(sapply(p_result, function(x) x$cover_t1_200)))
+  cover_v_t1_500 = c(cover_v_t1_500,mean(sapply(p_result, function(x) x$cover_t1_500)))
+  cover_v_t1_1000 = c(cover_v_t1_1000,mean(sapply(p_result, function(x) x$cover_t1_1000)))
+  cover_cope_v_bonf5 = c(cover_cope_v_bonf5, mean(sapply(p_result, function(x) x$cover_cope_5)))
+  cover_cope_v_bonf10 = c(cover_cope_v_bonf10, mean(sapply(p_result, function(x) x$cover_cope_10)))
+  cover_cope_v_bonf25 = c(cover_cope_v_bonf25, mean(sapply(p_result, function(x) x$cover_cope_25)))
+  # cover_cope_v_bonf50 = c(cover_cope_v_bonf50, mean(sapply(p_result, function(x) x$cover_cope_50)))
+  cover_cope_v_single = c(cover_cope_v_single, mean(sapply(p_result, function(x) x$cover_cope_single)))
+}
+
+result_frame_1d_irregular = data.frame(N = NVec, 
+                             Upper = cover_v_t1,
+                             Interval = cover_v_c1,
+                             Lower = cover_v_c2,
+                             Two_sided = cover_v_c3,
+                             Upper5 = cover_v_t1_5,
+                             Upper10 = cover_v_t1_10,
+                             Upper25 = cover_v_t1_25,
+                             Upper50 = cover_v_t1_50,
+                             Upper100 = cover_v_t1_100,
+                             Upper200 = cover_v_t1_200,
+                             Upper500 = cover_v_t1_500,
+                             Upper1000 = cover_v_t1_1000,
+                             SCB = SCB_contain_v,
+                             cope1 = cover_cope_v_single,
+                             cope5 = cover_cope_v_bonf5,
+                             cope10 = cover_cope_v_bonf10,
+                             cope25 = cover_cope_v_bonf25)
+knitr::kable(
+  result_frame_1d_irregular
+)
+
+```
+
+
+```{r}
+result_frame_1d_irregular %>% 
+  pivot_longer(cols = Upper:SCB, names_to = "method", values_to = "coverage_rate") %>% 
+  ggplot(aes(x = N, y = coverage_rate, color = method, size = method, shape = method))+
+  geom_point(position = position_jitter(h=0.015,w=0.015))
+```
+
+
+```{r}
+save.image('dense_functional_sim_1D_cope_irregular.RData')
+```
 
 # 2D dense functional data
 ```{r}

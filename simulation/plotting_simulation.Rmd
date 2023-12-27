@@ -11,6 +11,7 @@ source("../functions/SCB_dense.R")
 source("../functions/SCB_to_CS.R")
 source("../functions/noises.R") # for the noise functions
 source("../functions/plot_cs.R") 
+source("../functions/regression_outcome_scb.R")
 #library(SCBfda) # for the noise functions
 library(SIRF)
 library(tidyverse)
@@ -197,6 +198,56 @@ if(save){
  ggsave("./figures/dense_1_and_2dsim_results.png", width = unit(10, "cm"), height = unit(5, "cm")) 
 }
 ```
+
+```{r}
+# irregular design
+load( paste( "dense_functional_sim_1D_cope_irregular.RData" ) )
+df_result_sim = result_frame_1d_irregular %>%
+  select(N, SCI = SCB, Upper1000, Upper100, Upper25, Upper10, Upper5)%>% 
+  pivot_longer(!c(N), names_to = "Simulation", values_to = "coverage_rate") %>% 
+  mutate(coverage_rate = coverage_rate*100,
+         N = as_factor(N),
+         Simulation = fct_relevel(Simulation, "Upper5","Upper10",  
+                                                         "Upper25", "Upper100",
+                                                         "Upper1000","SCI", 
+                                                         "cope25","cope10","cope5"
+                                                          ))
+  
+mypal <- colorRampPalette(brewer.pal(6, "PuBu"))
+mypal2 <- colorRampPalette(rev(brewer.pal(6, "YlOrRd")))
+result_sim_plotC = df_result_sim %>% ggplot(aes(x = N, y = coverage_rate,group = Simulation,color = Simulation)) + 
+  geom_line()+
+  geom_point(aes(shape = Simulation)) +
+  scale_shape_manual(values = c(rep(1,6), rep(2, 4)),
+                     labels = c(TeX("$5$ levels"),TeX("$10$ levels"), 
+                                TeX("$25$ levels"),TeX(" $10 ^2$ levels"),
+                                TeX(" $10^3$ levels"),"SCI", 
+                                "25 levels bonf","10 levels bonf","5 levels bonf")
+  ) +
+  scale_colour_manual(values = c(mypal(6), mypal2(4)),
+                      labels = c(TeX("$5$ levels"),TeX("$10$ levels"), 
+                                 TeX("$25$ levels"),TeX(" $10 ^2$ levels"),
+                                 TeX(" $10^3$ levels"),"SCI", 
+                                 "25 levels bonf","10 levels bonf","5 levels bonf")
+  ) +
+  ylim(c(69,100)) +
+  geom_hline(yintercept = 100*(level+c(-2,2)*sqrt(level*(1-level)/n_sim)), linetype = 'dashed')+
+  theme_light() +
+  ggtitle("1D irregular sampling data coverage rate")+
+  theme(legend.position = c(0.75, 0.25),legend.key.size = unit(0.2, 'cm')) +
+  ylab("Coverage rate")+ 
+  xlab("Number of samples N") +
+  theme(axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        text = element_text(size = 13))
+result_sim_plotC
+if(save){
+ ggsave("./figures/dense_1d_irregular_sim_results.png", width = unit(5, "cm"), height = unit(5, "cm")) 
+}
+```
+
+
 
 Simulation coverage table for 1D
 ```{r}
